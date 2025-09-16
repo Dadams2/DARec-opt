@@ -120,6 +120,9 @@ ipython_config.py
 .pdm-python
 .pdm-build/
 
+# pkl files
+*.pkl
+
 # pixi
 #   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
 #pixi.lock
@@ -161,6 +164,9 @@ venv.bak/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# numpy data
+*.npy
 
 # Pyre type checker
 .pyre/
