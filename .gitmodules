@@ -1,0 +1,3 @@
+[submodule "reference/DARec"]
+	path = reference/DARec
+	url = git@github.com:Yu-Fangxu/DARec.git
