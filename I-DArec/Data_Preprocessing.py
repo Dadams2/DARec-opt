@@ -130,7 +130,6 @@ class Mydata(Dataset):
     def __len__(self):
         return self.S_data.shape[0]
 if __name__ == "__main__":
-    import os
     DATA_DIR = "data"  # Change this to your data directory
     files = [f for f in os.listdir(DATA_DIR) if f.startswith('ratings_') and f.endswith('.csv')]
     files.sort()
