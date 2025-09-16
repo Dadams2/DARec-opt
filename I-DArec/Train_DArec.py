@@ -26,8 +26,11 @@ args = parser.parse_args()
 # train_dataset = Mydata(r'D:\DARec\Dataset\ratings_Toys_and_Games.csv', r'D:\DARec\Dataset\ratings_Automotive.csv', train=True, preprocessed=True)
 # test_dataset = Mydata(r'D:\DARec\Dataset\ratings_Toys_and_Games.csv', r'D:\DARec\Dataset\ratings_Automotive.csv', train=False, preprocessed=True)
 
-train_dataset = Mydata("/home2/dadams/DARec/dataset/ratings_Toys_and_Games.csv", "/home2/dadams/DARec/dataset/ratings_Automotive.csv", train=True, preprocessed=True)
-test_dataset = Mydata("/home2/dadams/DARec/dataset/ratings_Toys_and_Games.csv", "/home2/dadams/DARec/dataset/ratings_Automotive.csv", train=False, preprocessed=True)
+# train_dataset = Mydata("/home2/dadams/DARec-opt/data/I_ratings_Toys_and_Games.csv", "/home2/dadams/DARec-opt/data/I_ratings_Automotive.csv", train=True, preprocessed=True)
+# test_dataset = Mydata("/home2/dadams/DARec-opt/data/I_ratings_Toys_and_Games.csv", "/home2/dadams/DARec-opt/data/I_ratings_Automotive.csv", train=False, preprocessed=True)
+
+train_dataset = Mydata("/home2/dadams/DARec-opt/data/ratings_Amazon_Instant_Video.csv", "/home2/dadams/DARec-opt/data/ratings_Apps_for_Android.csv", train=True, preprocessed=True)
+test_dataset = Mydata("/home2/dadams/DARec-opt/data/ratings_Amazon_Instant_Video.csv", "/home2/dadams/DARec-opt/data/ratings_Apps_for_Android.csv", train=False, preprocessed=True)
 
 train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)

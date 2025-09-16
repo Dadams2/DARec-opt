@@ -23,8 +23,13 @@ parser.add_argument("--T_pretrained_weights", type=str, default='Pretrained_Para
 args = parser.parse_args()
 
 ### Load Data
-train_dataset = Mydata("/home2/dadams/DARec/dataset/ratings_Toys_and_Games.csv", "/home2/dadams/DARec/dataset/ratings_Automotive.csv", train=True, preprocessed=True)
-test_dataset = Mydata("/home2/dadams/DARec/dataset/ratings_Toys_and_Games.csv", "/home2/dadams/DARec/dataset/ratings_Automotive.csv", train=False, preprocessed=True)
+# train_dataset = Mydata("/home2/dadams/DARec-opt/data/U_ratings_Toys_and_Games.csv", "/home2/dadams/DARec-opt/data/U_ratings_Automotive.csv", train=True, preprocessed=True)
+# test_dataset = Mydata("/home2/dadams/DARec-opt/data/U_ratings_Toys_and_Games.csv", "/home2/dadams/DARec-opt/data/U_ratings_Automotive.csv", train=False, preprocessed=True)
+
+
+train_dataset = Mydata("/home2/dadams/DARec-opt/data/ratings_Amazon_Instant_Video.csv", "/home2/dadams/DARec-opt/data/ratings_Apps_for_Android.csv", train=True, preprocessed=True)
+test_dataset = Mydata("/home2/dadams/DARec-opt/data/ratings_Amazon_Instant_Video.csv", "/home2/dadams/DARec-opt/data/ratings_Apps_for_Android.csv", train=False, preprocessed=True)
+
 
 train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)

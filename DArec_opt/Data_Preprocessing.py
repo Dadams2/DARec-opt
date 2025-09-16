@@ -58,8 +58,8 @@ class Mydata(Dataset):
                 self.T_data[user, item] = row["Rating"]
             S_base = os.path.basename(self.S_path)
             T_base = os.path.basename(self.T_path)
-            S_out = os.path.join(os.path.dirname(self.S_path), f'{self.mode}_' + S_base + '.npy')
-            T_out = os.path.join(os.path.dirname(self.T_path), f'{self.mode}_' + T_base + '.npy')
+            S_out = os.path.join(os.path.dirname(self.S_path), f'{self.mode}_{S_base}_{T_base}.npy')
+            T_out = os.path.join(os.path.dirname(self.T_path), f'{self.mode}_{T_base}_{S_base}.npy')
             np.save(S_out, self.S_data)
             np.save(T_out, self.T_data)
             self.S_out = S_out
@@ -67,8 +67,8 @@ class Mydata(Dataset):
         else:
             S_base = os.path.basename(self.S_path)
             T_base = os.path.basename(self.T_path)
-            S_out = os.path.join(os.path.dirname(self.S_path), f'{self.mode}_' + S_base + '.npy')
-            T_out = os.path.join(os.path.dirname(self.T_path), f'{self.mode}_' + T_base + '.npy')
+            S_out = os.path.join(os.path.dirname(self.S_path), f'{self.mode}_{S_base}_{T_base}.npy')
+            T_out = os.path.join(os.path.dirname(self.T_path), f'{self.mode}_{T_base}_{S_base}.npy')
             self.S_data = np.load(S_out)
             self.T_data = np.load(T_out)
         if self.mode == 'I':

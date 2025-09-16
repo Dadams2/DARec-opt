@@ -22,8 +22,8 @@ parser.add_argument('--n_factors', type=int, help="embedding size of autoencoder
 parser.add_argument('--train_S', type=bool, help="Whether to train the source autoencoder", default=False)
 args = parser.parse_args()
 
-train_dataset = Mydata("/home2/dadams/DARec/dataset/ratings_Toys_and_Games.csv", "/home2/dadams/DARec/dataset/ratings_Automotive.csv", train=True, preprocessed=True)
-test_dataset = Mydata("/home2/dadams/DARec/dataset/ratings_Toys_and_Games.csv", "/home2/dadams/DARec/dataset/ratings_Automotive.csv", train=False, preprocessed=True)
+train_dataset = Mydata("/home2/dadams/DARec-opt/data/ratings_Amazon_Instant_Video.csv", "/home2/dadams/DARec-opt/data/ratings_Apps_for_Android.csv", train=True, preprocessed=True)
+test_dataset = Mydata("/home2/dadams/DARec-opt/data/ratings_Amazon_Instant_Video.csv", "/home2/dadams/DARec-opt/data/ratings_Apps_for_Android.csv", train=False, preprocessed=True)
 
 train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 test_loader = DataLoader(test_dataset,  batch_size=args.batch_size, shuffle=False)

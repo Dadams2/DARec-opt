@@ -1,5 +1,6 @@
 from torch.utils.data import DataLoader, Dataset
 from collections import Counter
+import os
 import pandas as pd
 from tqdm import tqdm
 import numpy as np
@@ -72,11 +73,21 @@ class Mydata(Dataset):
                 item = row["Item"]
                 self.T_data[user, item] = row["Rating"]
 
-            np.save(self.S_path + '.npy', self.S_data)
-            np.save(self.T_path + '.npy', self.T_data)
+            S_base = os.path.basename(self.S_path)
+            T_base = os.path.basename(self.T_path)
+            S_out = os.path.join(os.path.dirname(self.S_path), f'I_{S_base}_{T_base}.npy')
+            T_out = os.path.join(os.path.dirname(self.T_path), f'I_{T_base}_{S_base}.npy')
+            np.save(S_out, self.S_data)
+            np.save(T_out, self.T_data)
+            self.S_out = S_out
+            self.T_out = T_out
         else:
-            self.S_data = np.load(self.S_path + '.npy')
-            self.T_data = np.load(self.T_path + '.npy')
+            S_base = os.path.basename(self.S_path)
+            T_base = os.path.basename(self.T_path)
+            S_out = os.path.join(os.path.dirname(self.S_path), f'I_{S_base}_{T_base}.npy')
+            T_out = os.path.join(os.path.dirname(self.T_path), f'I_{T_base}_{S_base}.npy')
+            self.S_data = np.load(S_out)
+            self.T_data = np.load(T_out)
 
         self.S_data = self.S_data.T
         self.T_data = self.T_data.T
@@ -133,12 +144,4 @@ if __name__ == "__main__":
             T_path = os.path.join(DATA_DIR, T_file)
             print(f"Processing S: {S_file}, T: {T_file}")
             data = Mydata(S_path, T_path, train=True, preprocessed=False)
-            S_npy = S_path + '.npy'
-            T_npy = T_path + '.npy'
-            S_npy_I = os.path.join(DATA_DIR, 'I_' + S_file + '.npy')
-            T_npy_I = os.path.join(DATA_DIR, 'I_' + T_file + '.npy')
-            if os.path.exists(S_npy):
-                os.rename(S_npy, S_npy_I)
-            if os.path.exists(T_npy):
-                os.rename(T_npy, T_npy_I)
-            print(f"Saved: {S_npy_I}, {T_npy_I}")
+            print(f"Saved: {data.S_out}, {data.T_out}")

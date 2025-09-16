@@ -2,8 +2,10 @@ from torch.utils.data import DataLoader, Dataset
 from collections import Counter
 import pandas as pd
 from tqdm import tqdm
+import os
 import numpy as np
 import torch
+
 class Mydata(Dataset):
     def __init__(self, S_path, T_path, train_ratio=0.9, test_ratio=0.1, train=None, preprocessed=True):
         super().__init__()
@@ -70,11 +72,21 @@ class Mydata(Dataset):
                 item = row["Item"]
                 self.T_data[user, item] = row["Rating"]
 
-            np.save(self.S_path + '.npy', self.S_data)
-            np.save(self.T_path + '.npy', self.T_data)
+            S_base = os.path.basename(self.S_path)
+            T_base = os.path.basename(self.T_path)
+            S_out = os.path.join(os.path.dirname(self.S_path), f'U_{S_base}_{T_base}.npy')
+            T_out = os.path.join(os.path.dirname(self.T_path), f'U_{T_base}_{S_base}.npy')
+            np.save(S_out, self.S_data)
+            np.save(T_out, self.T_data)
+            self.S_out = S_out
+            self.T_out = T_out
         else:
-            self.S_data = np.load(self.S_path + '.npy')
-            self.T_data = np.load(self.T_path + '.npy')
+            S_base = os.path.basename(self.S_path)
+            T_base = os.path.basename(self.T_path)
+            S_out = os.path.join(os.path.dirname(self.S_path), f'U_{S_base}_{T_base}.npy')
+            T_out = os.path.join(os.path.dirname(self.T_path), f'U_{T_base}_{S_base}.npy')
+            self.S_data = np.load(S_out)
+            self.T_data = np.load(T_out)
 
         np.random.seed(0)
         self.S_y = torch.zeros((self.S_data.shape[0], 1))
@@ -107,7 +119,6 @@ class Mydata(Dataset):
         return self.S_data.shape[0]
 
 if __name__ == "__main__":
-    import os
     DATA_DIR = "data"  # Change this to your data directory
     files = [f for f in os.listdir(DATA_DIR) if f.startswith('ratings_') and f.endswith('.csv')]
     # Sort for reproducibility
@@ -124,13 +135,4 @@ if __name__ == "__main__":
             print(f"Processing S: {S_file}, T: {T_file}")
             # Prepend 'U_' to output .npy files by copying and renaming after creation
             data = Mydata(S_path, T_path, train=True, preprocessed=False)
-            # Rename output files to prepend 'U_'
-            S_npy = S_path + '.npy'
-            T_npy = T_path + '.npy'
-            S_npy_U = os.path.join(DATA_DIR, 'U_' + S_file + '.npy')
-            T_npy_U = os.path.join(DATA_DIR, 'U_' + T_file + '.npy')
-            if os.path.exists(S_npy):
-                os.rename(S_npy, S_npy_U)
-            if os.path.exists(T_npy):
-                os.rename(T_npy, T_npy_U)
-            print(f"Saved: {S_npy_U}, {T_npy_U}")
+            print(f"Saved: {data.S_out}, {data.T_out}")
