@@ -3,6 +3,7 @@ from collections import Counter
 import pandas as pd
 from tqdm import tqdm
 import numpy as np
+import os
 import torch
 from AutoRec import *
 
@@ -55,11 +56,21 @@ class Mydata(Dataset):
                 user = row["User"]
                 item = row["Item"]
                 self.T_data[user, item] = row["Rating"]
-            np.save(self.S_path + f'.{self.mode}.npy', self.S_data)
-            np.save(self.T_path + f'.{self.mode}.npy', self.T_data)
+            S_base = os.path.basename(self.S_path)
+            T_base = os.path.basename(self.T_path)
+            S_out = os.path.join(os.path.dirname(self.S_path), f'{self.mode}_' + S_base + '.npy')
+            T_out = os.path.join(os.path.dirname(self.T_path), f'{self.mode}_' + T_base + '.npy')
+            np.save(S_out, self.S_data)
+            np.save(T_out, self.T_data)
+            self.S_out = S_out
+            self.T_out = T_out
         else:
-            self.S_data = np.load(self.S_path + f'.{self.mode}.npy')
-            self.T_data = np.load(self.T_path + f'.{self.mode}.npy')
+            S_base = os.path.basename(self.S_path)
+            T_base = os.path.basename(self.T_path)
+            S_out = os.path.join(os.path.dirname(self.S_path), f'{self.mode}_' + S_base + '.npy')
+            T_out = os.path.join(os.path.dirname(self.T_path), f'{self.mode}_' + T_base + '.npy')
+            self.S_data = np.load(S_out)
+            self.T_data = np.load(T_out)
         if self.mode == 'I':
             self.S_data = self.S_data.T
             self.T_data = self.T_data.T
@@ -94,10 +105,7 @@ class Mydata(Dataset):
         return self.S_data.shape[0]
 
 if __name__ == "__main__":
-    import os
     DATA_DIR = "data"  # Change this to your data directory
-    TEST_DIR = os.path.join(DATA_DIR, "test")
-    os.makedirs(TEST_DIR, exist_ok=True)
     files = [f for f in os.listdir(DATA_DIR) if f.startswith('ratings_') and f.endswith('.csv')]
     files.sort()
     for i in range(len(files)):
@@ -111,15 +119,7 @@ if __name__ == "__main__":
             print(f"Processing S: {S_file}, T: {T_file}")
             # U-DARec mode
             data_U = Mydata(S_path, T_path, train=True, preprocessed=False, mode='U')
-            S_npy_U = os.path.join(TEST_DIR, 'U_' + S_file + '.npy')
-            T_npy_U = os.path.join(TEST_DIR, 'U_' + T_file + '.npy')
-            os.rename(S_path + '.U.npy', S_npy_U)
-            os.rename(T_path + '.U.npy', T_npy_U)
-            print(f"Saved U: {S_npy_U}, {T_npy_U}")
+            print(f"Saved U: {data_U.S_out}, {data_U.T_out}")
             # I-DARec mode
             data_I = Mydata(S_path, T_path, train=True, preprocessed=False, mode='I')
-            S_npy_I = os.path.join(TEST_DIR, 'I_' + S_file + '.npy')
-            T_npy_I = os.path.join(TEST_DIR, 'I_' + T_file + '.npy')
-            os.rename(S_path + '.I.npy', S_npy_I)
-            os.rename(T_path + '.I.npy', T_npy_I)
-            print(f"Saved I: {S_npy_I}, {T_npy_I}")
+            print(f"Saved I: {data_I.S_out}, {data_I.T_out}")
