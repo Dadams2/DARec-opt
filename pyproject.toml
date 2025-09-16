@@ -9,8 +9,15 @@ dependencies = [
     "matplotlib>=3.10.6",
     "numpy>=2.3.2",
     "pandas>=2.3.2",
+    "plotly>=6.3.0",
     "scikit-learn>=1.7.1",
     "seaborn>=0.13.2",
     "torch>=2.8.0",
     "tqdm>=4.67.1",
+]
+
+[dependency-groups]
+dev = [
+    "ipywidgets>=8.1.7",
+    "jupyter>=1.1.1",
 ]
