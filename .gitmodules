@@ -1,3 +1,6 @@
 [submodule "reference/DARec"]
 	path = reference/DARec
 	url = git@github.com:Yu-Fangxu/DARec.git
+[submodule "reference/Graph-Optimal-Transport"]
+	path = reference/Graph-Optimal-Transport
+	url = git@github.com:LiqunChen0606/Graph-Optimal-Transport.git
