@@ -1,4 +1,5 @@
 
+
 import numpy as np
 import torch.optim as optim
 import torch.utils.data
@@ -9,87 +10,68 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
 import math
+import os
+import datetime
+import itertools
+import json
+import traceback
 
-def get_default_args():
-    class Args:
-        pass
-    args = Args()
-    args.epochs = 70
-    args.batch_size = 64
-    args.lr = 1e-3
-    args.wd = 1e-4
-    args.n_factors = 200
-    args.n_users = 1637
-    args.S_n_items = 23450
-    args.T_n_items = 16993
-    args.RPE_hidden_size = 200
-    args.S_pretrained_weights = r'Pretrained_ParametersS_AutoRec_50.pkl'
-    args.T_pretrained_weights = r'Pretrained_ParametersT_AutoRec_50.pkl'
-    return args
-
-def parse_args(args_dict=None):
-    import argparse
-    parser = argparse.ArgumentParser(description='DArec with PyTorch')
-    parser.add_argument('--epochs', '-e', type=int, default=70)
-    parser.add_argument('--batch_size', '-b', type=int, default=64)
-    # parser.add_argument('--lr', '-l', type=float, help='learning rate', default=1e-3)
-    parser.add_argument('--wd', '-w', type=float, help='weight decay(lambda)', default=1e-4)
-    parser.add_argument("--n_factors", type=int, default=200, help="embedding dim")
-    parser.add_argument("--n_users", type=int, default=1637, help="size of each image batch")
-    parser.add_argument("--S_n_items", type=int, default=23450, help="Source items number")
-    parser.add_argument("--T_n_items", type=int, default=16993, help="Target items number")
-    parser.add_argument("--RPE_hidden_size", type=int, default=200, help="hidden size of Rating Pattern Extractor")
-    parser.add_argument("--S_pretrained_weights", type=str, default=r'Pretrained_ParametersS_AutoRec_50.pkl')
-    parser.add_argument("--T_pretrained_weights", type=str, default=r'Pretrained_ParametersT_AutoRec_50.pkl')
-    if args_dict is None:
-        return parser.parse_args()
+def convert_to_json_serializable(obj):
+    if isinstance(obj, dict):
+        return {k: convert_to_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_json_serializable(item) for item in obj]
+    elif hasattr(obj, 'item'):
+        val = obj.item()
+        if isinstance(val, float) and (np.isnan(val) or np.isinf(val)):
+            return "NaN" if np.isnan(val) else ("Infinity" if val > 0 else "-Infinity")
+        return val
+    elif isinstance(obj, (np.float32, np.float64)):
+        if np.isnan(obj) or np.isinf(obj):
+            return "NaN" if np.isnan(obj) else ("Infinity" if obj > 0 else "-Infinity")
+        return float(obj)
+    elif isinstance(obj, (np.int32, np.int64)):
+        return int(obj)
+    elif isinstance(obj, float):
+        if np.isnan(obj) or np.isinf(obj):
+            return "NaN" if np.isnan(obj) else ("Infinity" if obj > 0 else "-Infinity")
+        return obj
     else:
-        args = parser.parse_args([])
-        for k, v in args_dict.items():
-            setattr(args, k, v)
-        return args
+        return obj
 
-
-def run_training(args=None):
-    """
-    Main training entry point. Accepts an args object (from parse_args or get_default_args), or None for defaults.
-    Returns: train_rmse, test_rmse
-    """
-    if args is None:
-        args = get_default_args()
-
-    train_dataset = Mydata("/home2/dadams/DARec/dataset/ratings_Toys_and_Games.csv", "/home2/dadams/DARec/dataset/ratings_Automotive.csv", train=True, preprocessed=True)
-    test_dataset = Mydata("/home2/dadams/DARec/dataset/ratings_Toys_and_Games.csv", "/home2/dadams/DARec/dataset/ratings_Automotive.csv", train=False, preprocessed=True)
-
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
-
-    args.n_users = train_dataset.S_data.shape[1]
-    args.S_n_items, args.T_n_items = train_dataset.S_data.shape[0], train_dataset.T_data.shape[0]
-
-    print("Data is loaded")
-    net = I_DArec(args)
-    net.S_autorec.load_state_dict(torch.load(args.S_pretrained_weights))
-    net.T_autorec.load_state_dict(torch.load(args.T_pretrained_weights))
+def train_idarec_opt(source_domain_path, target_domain_path, config, output_dir="./results", log_dir="./logs"):
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    source_name = os.path.basename(source_domain_path).replace('.csv', '').replace('ratings_', '')
+    target_name = os.path.basename(target_domain_path).replace('.csv', '').replace('ratings_', '')
+    log_filename = f"idarec_training_log_{source_name}_to_{target_name}_{timestamp}.json"
+    log_path = os.path.join(log_dir, log_filename)
+    train_dataset = Mydata(source_domain_path, target_domain_path, train=True, preprocessed=True)
+    test_dataset = Mydata(source_domain_path, target_domain_path, train=False, preprocessed=True)
+    train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], shuffle=False)
+    config['n_users'] = train_dataset.S_data.shape[1]
+    config['S_n_items'], config['T_n_items'] = train_dataset.S_data.shape[0], train_dataset.T_data.shape[0]
+    print(f"Data loaded for {source_name} -> {target_name}")
+    net = I_DArec(config)
+    net.S_autorec.load_state_dict(torch.load(config['S_pretrained_weights']))
+    net.T_autorec.load_state_dict(torch.load(config['T_pretrained_weights']))
     net.cuda()
-
-    optimizer = optim.Adam(filter(lambda p: p.requires_grad, net.parameters()), weight_decay=args.wd, lr=args.lr)
+    optimizer = optim.Adam(filter(lambda p: p.requires_grad, net.parameters()), weight_decay=config['wd'], lr=config['lr'])
     RMSE = MRMSELoss().cuda()
     criterion = DArec_Loss().cuda()
-
-    def train(epoch):
+    def train_epoch(epoch):
         Total_RMSE = 0
         Total_MASK = 0
-        gw_weight = 0.1  # You can make this an argument if you want
+        gw_weight = config.get('gw_weight', 0.1)
         for idx, d in enumerate(train_loader):
             source_rating, target_rating, source_labels, target_labels = d
             source_rating = source_rating.cuda()
             target_rating = target_rating.cuda()
             source_labels = source_labels.squeeze(1).long().cuda()
             target_labels= target_labels.squeeze(1).long().cuda()
-
             optimizer.zero_grad()
-            # Forward for source
             class_output_s, source_prediction_s, target_prediction_s, gw_loss_s = net(
                 source_rating, True, source_rating_matrix=source_rating, target_rating_matrix=target_rating)
             source_loss, source_mask, target_mask = criterion(class_output_s, source_prediction_s, target_prediction_s,
@@ -97,16 +79,11 @@ def run_training(args=None):
             rmse, _ = RMSE(source_prediction_s, source_rating)
             Total_RMSE += rmse.item()
             Total_MASK += torch.sum(target_mask).item()
-
-            # Forward for target
             class_output_t, source_prediction_t, target_prediction_t, gw_loss_t = net(
                 target_rating, False, source_rating_matrix=source_rating, target_rating_matrix=target_rating)
             target_loss, source_mask, target_mask = criterion(class_output_t, source_prediction_t, target_prediction_t,
                                                               source_rating, target_rating, target_labels)
-
-            # Combine losses
             loss = source_loss + target_loss
-            # Add GW loss if available (average if both are not None)
             gw_losses = []
             if gw_loss_s is not None:
                 gw_losses.append(gw_loss_s)
@@ -114,12 +91,10 @@ def run_training(args=None):
                 gw_losses.append(gw_loss_t)
             if gw_losses:
                 loss = loss + gw_weight * sum(gw_losses) / len(gw_losses)
-
             loss.backward()
             optimizer.step()
         return math.sqrt(Total_RMSE / Total_MASK)
-
-    def test():
+    def test_epoch():
         Total_RMSE = 0
         Total_MASK = 0
         with torch.no_grad():
@@ -129,7 +104,6 @@ def run_training(args=None):
                 target_rating = target_rating.cuda()
                 source_labels = source_labels.squeeze(1).long().cuda()
                 target_labels = target_labels.squeeze(1).long().cuda()
-                # Forward for source (unpack 4 outputs for consistency)
                 class_output, source_prediction, target_prediction, _ = net(source_rating, True, source_rating_matrix=source_rating, target_rating_matrix=target_rating)
                 source_loss, source_mask, target_mask = criterion(class_output, source_prediction, target_prediction,
                                                         source_rating, target_rating, source_labels)
@@ -137,41 +111,210 @@ def run_training(args=None):
                 Total_RMSE += rmse.item()
                 Total_MASK += torch.sum(target_mask).item()
         return math.sqrt(Total_RMSE / Total_MASK)
-
+    training_log = {
+        'config': config,
+        'source_domain': source_name,
+        'target_domain': target_name,
+        'epochs': []
+    }
     train_rmse = []
     test_rmse = []
     wdir = r"I-darec"
-    for epoch in tqdm(range(args.epochs)):
-        train_rmse.append(train(epoch))
-        test_rmse.append(test())
-        if epoch % args.epochs == args.epochs - 1:
-            torch.save(net.state_dict(), wdir+"%d.pkl" % (epoch+1))
-    print(min(test_rmse))
-    # Improved plot with seaborn
+    for epoch in tqdm(range(config['epochs']), desc=f"Training {source_name}->{target_name}"):
+        tr_rmse = train_epoch(epoch)
+        te_rmse = test_epoch()
+        train_rmse.append(tr_rmse)
+        test_rmse.append(te_rmse)
+        epoch_log = {
+            'epoch': epoch + 1,
+            'train_rmse': tr_rmse,
+            'test_rmse': te_rmse
+        }
+        training_log['epochs'].append(epoch_log)
+        if epoch == config['epochs'] - 1:
+            model_path = os.path.join(output_dir, f"I_DArec_opt_{source_name}_{target_name}_{epoch+1}_{timestamp}.pkl")
+            torch.save(net.state_dict(), model_path)
+    with open(log_path, 'w') as f:
+        json.dump(convert_to_json_serializable(training_log), f, indent=2)
+    print(f"Best test RMSE: {min(test_rmse):.4f}")
+    print(f"Training log saved to: {log_path}")
     sns.set(style="whitegrid", font_scale=1.2)
     plt.figure(figsize=(10, 6))
-    plt.plot(range(args.epochs), train_rmse, label='Train RMSE', marker='o', linewidth=2)
-    plt.plot(range(args.epochs), test_rmse, label='Test RMSE', marker='s', linewidth=2)
+    plt.plot(range(config['epochs']), train_rmse, label='Train RMSE', marker='o', linewidth=2)
+    plt.plot(range(config['epochs']), test_rmse, label='Test RMSE', marker='s', linewidth=2)
     plt.xlabel('Epoch', fontsize=14)
     plt.ylabel('RMSE', fontsize=14)
     plt.title('Training and Test RMSE over Epochs', fontsize=16)
-    plt.xticks(range(0, args.epochs, max(1, args.epochs // 20)))
+    plt.xticks(range(0, config['epochs'], max(1, config['epochs'] // 20)))
     plt.legend(fontsize=12)
     plt.grid(True, linestyle='--', alpha=0.7)
     plt.tight_layout()
     plt.show()
-    return train_rmse, test_rmse
+    return {
+        'best_rmse': min(test_rmse),
+        'log_path': log_path,
+        'model_path': model_path
+    }
 
-def main(args_dict=None):
-    """
-    Main entry point for CLI or notebook. args_dict can be a dictionary of arguments to override defaults.
-    """
-    if args_dict is not None:
-        args = parse_args(args_dict)
+def grid_search_idarec_opt_hyperparameters(source_domain_path, target_domain_path, param_grid, output_dir="./results", log_dir="./logs"):
+    param_names = list(param_grid.keys())
+    param_values = list(param_grid.values())
+    param_combinations = list(itertools.product(*param_values))
+    results = []
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    source_name = os.path.basename(source_domain_path).replace('.csv', '').replace('ratings_', '')
+    target_name = os.path.basename(target_domain_path).replace('.csv', '').replace('ratings_', '')
+    print(f"Starting grid search with {len(param_combinations)} combinations for {source_name} -> {target_name}")
+    for i, param_combo in enumerate(param_combinations):
+        config = dict(zip(param_names, param_combo))
+        config['S_pretrained_weights'] = 'Pretrained_ParametersS_AutoRec_50.pkl'
+        config['T_pretrained_weights'] = 'Pretrained_ParametersT_AutoRec_50.pkl'
+        print(f"\nGrid search {i+1}/{len(param_combinations)}: {config}")
+        try:
+            result = train_idarec_opt(
+                source_domain_path,
+                target_domain_path,
+                config,
+                output_dir,
+                log_dir
+            )
+            result['config'] = config
+            result['combination_id'] = i + 1
+            results.append(result)
+        except Exception as e:
+            error_traceback = traceback.format_exc()
+            print(f"Error with configuration {config}: {e}")
+            print(f"Full traceback:\n{error_traceback}")
+            results.append({
+                'config': config,
+                'combination_id': i + 1,
+                'error': str(e),
+                'error_traceback': error_traceback,
+                'best_rmse': float('inf')
+            })
+    grid_search_log = {
+        'source_domain': source_name,
+        'target_domain': target_name,
+        'param_grid': param_grid,
+        'results': results,
+        'timestamp': timestamp
+    }
+    grid_search_path = os.path.join(log_dir, f"idarec_grid_search_{source_name}_to_{target_name}_{timestamp}.json")
+    with open(grid_search_path, 'w') as f:
+        json.dump(convert_to_json_serializable(grid_search_log), f, indent=2)
+    valid_results = [r for r in results if 'error' not in r]
+    if valid_results:
+        best_result = min(valid_results, key=lambda x: x['best_rmse'])
+        print(f"\nGrid search completed!")
+        print(f"Best RMSE: {best_result['best_rmse']:.4f} with config: {best_result['config']}")
+        print(f"Grid search results saved to: {grid_search_path}")
+        return {
+            'best_config': best_result,
+            'all_results': results,
+            'grid_search_path': grid_search_path
+        }
     else:
-        import sys
-        if hasattr(sys, 'argv') and len(sys.argv) > 1:
-            args = parse_args()
-        else:
-            args = get_default_args()
-    return run_training(args)
+        print("All configurations failed!")
+        return {'all_results': results, 'grid_search_path': grid_search_path}
+
+def run_multi_domain_idarec_opt_experiments(domain_pairs, config=None, param_grid=None, output_dir="./results", log_dir="./logs"):
+    if config is not None and param_grid is not None:
+        raise ValueError("Provide either config or param_grid, not both")
+    if config is None and param_grid is None:
+        raise ValueError("Must provide either config or param_grid")
+    all_results = []
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    for i, (source_path, target_path) in enumerate(domain_pairs):
+        print(f"\n{'='*60}")
+        print(f"Domain pair {i+1}/{len(domain_pairs)}")
+        print(f"Source: {source_path}")
+        print(f"Target: {target_path}")
+        print(f"{'='*60}")
+        try:
+            if config is not None:
+                config['S_pretrained_weights'] = 'Pretrained_ParametersS_AutoRec_50.pkl'
+                config['T_pretrained_weights'] = 'Pretrained_ParametersT_AutoRec_50.pkl'
+                result = train_idarec_opt(source_path, target_path, config, output_dir, log_dir)
+                result['domain_pair'] = (source_path, target_path)
+                all_results.append(result)
+            else:
+                result = grid_search_idarec_opt_hyperparameters(source_path, target_path, param_grid, output_dir, log_dir)
+                result['domain_pair'] = (source_path, target_path)
+                all_results.append(result)
+        except Exception as e:
+            error_traceback = traceback.format_exc()
+            print(f"Error processing domain pair {source_path} -> {target_path}: {e}")
+            print(f"Full traceback:\n{error_traceback}")
+            all_results.append({
+                'domain_pair': (source_path, target_path),
+                'error': str(e),
+                'error_traceback': error_traceback
+            })
+    experiment_summary = {
+        'timestamp': timestamp,
+        'domain_pairs': domain_pairs,
+        'experiment_type': 'single_config' if config is not None else 'grid_search',
+        'config': config,
+        'param_grid': param_grid,
+        'results': all_results
+    }
+    summary_path = os.path.join(log_dir, f"multi_domain_idarec_opt_experiment_{timestamp}.json")
+    with open(summary_path, 'w') as f:
+        json.dump(convert_to_json_serializable(experiment_summary), f, indent=2)
+    print(f"\n{'='*60}")
+    print(f"Multi-domain I-DArec-opt experiment completed!")
+    print(f"Processed {len(domain_pairs)} domain pairs")
+    print(f"Results saved to: {summary_path}")
+    print(f"{'='*60}")
+    return {
+        'experiment_summary': experiment_summary,
+        'summary_path': summary_path
+    }
+
+# Example usage functions
+def create_default_idarec_opt_config():
+    return {
+        'epochs': 70,
+        'batch_size': 64,
+        'lr': 1e-3,
+        'wd': 1e-4,
+        'n_factors': 200,
+        'RPE_hidden_size': 200,
+        'S_pretrained_weights': 'Pretrained_ParametersS_AutoRec_50.pkl',
+        'T_pretrained_weights': 'Pretrained_ParametersT_AutoRec_50.pkl',
+        'gw_weight': 0.1
+    }
+
+def create_default_idarec_opt_param_grid():
+    return {
+        'epochs': [70],
+        'batch_size': [32, 64],
+        'lr': [1e-3, 1e-4],
+        'wd': [1e-4, 1e-5],
+        'n_factors': [200, 400],
+        'RPE_hidden_size': [200],
+        'gw_weight': [0.05, 0.1, 0.2]
+    }
+
+if __name__ == "__main__":
+    base_data_dir = "../../data"
+    domain_pairs = [
+        (f"{base_data_dir}/ratings_Amazon_Instant_Video.csv", f"{base_data_dir}/ratings_Apps_for_Android.csv"),
+        (f"{base_data_dir}/ratings_Amazon_Instant_Video.csv", f"{base_data_dir}/ratings_Beauty.csv"),
+        # Add more domain pairs as needed
+    ]
+    config = create_default_idarec_opt_config()
+    results = run_multi_domain_idarec_opt_experiments(
+        domain_pairs=domain_pairs,
+        config=config,
+        output_dir="./idarec_opt_models",
+        log_dir="./idarec_opt_logs"
+    )
+    # Option 2: Grid search (comment out the above and uncomment below)
+    # param_grid = create_default_idarec_opt_param_grid()
+    # results = run_multi_domain_idarec_opt_experiments(
+    #     domain_pairs=domain_pairs,
+    #     param_grid=param_grid,
+    #     output_dir="./idarec_opt_models",
+    #     log_dir="./idarec_opt_logs"
+    # )

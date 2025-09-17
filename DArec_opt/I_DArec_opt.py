@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from function import *
 import argparse
-from DArec_opt.IAutoRec import I_AutoRec
+from I_DArec.AutoRec import I_AutoRec
 # Import GW distance from OT_torch_
 from OT_torch_ import GW_distance_uniform
 
