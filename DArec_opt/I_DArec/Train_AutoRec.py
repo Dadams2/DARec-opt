@@ -10,7 +10,38 @@ import os
 import datetime
 import itertools
 import json
+import numpy as np
 import traceback
+
+def convert_to_json_serializable(obj):
+    """Convert numpy/torch types to JSON serializable types."""
+    if isinstance(obj, dict):
+        return {k: convert_to_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_json_serializable(item) for item in obj]
+    elif isinstance(obj, (np.integer, np.floating)):
+        if np.isnan(obj):
+            return "NaN"
+        return obj.item()
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif hasattr(obj, 'item'):  # PyTorch tensors
+        val = obj.item()
+        if isinstance(val, float) and (np.isnan(val) or np.isinf(val)):
+            return "NaN" if np.isnan(val) else ("Infinity" if val > 0 else "-Infinity")
+        return val
+    elif isinstance(obj, (np.float32, np.float64)):
+        if np.isnan(obj) or np.isinf(obj):
+            return "NaN" if np.isnan(obj) else ("Infinity" if obj > 0 else "-Infinity")
+        return float(obj)
+    elif isinstance(obj, (np.int32, np.int64)):
+        return int(obj)
+    elif isinstance(obj, float):
+        if np.isnan(obj) or np.isinf(obj):
+            return "NaN" if np.isnan(obj) else ("Infinity" if obj > 0 else "-Infinity")
+        return obj
+    else:
+        return obj
 
 def train_autoencoders(source_domain_path, target_domain_path, config, output_dir="./results", log_dir="./logs"):
     """
@@ -165,7 +196,7 @@ def train_autoencoders(source_domain_path, target_domain_path, config, output_di
     
     # Save training log
     with open(log_path, 'w') as f:
-        json.dump(training_log, f, indent=2)
+        json.dump(convert_to_json_serializable(training_log), f, indent=2)
     
     print(f"Source best test RMSE: {min(S_test_rmse):.4f}")
     print(f"Target best test RMSE: {min(T_test_rmse):.4f}")
@@ -252,7 +283,7 @@ def grid_search_hyperparameters(source_domain_path, target_domain_path, param_gr
     
     grid_search_path = os.path.join(log_dir, f"grid_search_{source_name}_to_{target_name}_{timestamp}.json")
     with open(grid_search_path, 'w') as f:
-        json.dump(grid_search_log, f, indent=2)
+        json.dump(convert_to_json_serializable(grid_search_log), f, indent=2)
     
     # Find best configurations
     valid_results = [r for r in results if 'error' not in r]
@@ -336,7 +367,7 @@ def run_multi_domain_experiments(domain_pairs, config=None, param_grid=None, out
     
     summary_path = os.path.join(log_dir, f"multi_domain_experiment_{timestamp}.json")
     with open(summary_path, 'w') as f:
-        json.dump(experiment_summary, f, indent=2)
+        json.dump(convert_to_json_serializable(experiment_summary), f, indent=2)
     
     print(f"\n{'='*60}")
     print(f"Multi-domain experiment completed!")
