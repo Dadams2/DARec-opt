@@ -1,0 +1,69 @@
+# Domain adaptation study configuration
+name: "domain_adaptation_study"
+description: "Study domain adaptation performance across different domain pairs"
+
+data:
+  data_dir: "/home2/dadams/DARec-opt/data"
+  train_ratio: 0.9
+  test_ratio: 0.1
+  preprocessed: true
+  batch_size: 64
+  # Focus on specific domain combinations
+  source_domains: 
+    - "Amazon_Instant_Video"
+    - "Electronics"
+    - "Books"
+  target_domains:
+    - "Apps_for_Android"
+    - "Automotive"
+    - "Beauty"
+    - "Toys_and_Games"
+
+methods:
+  - name: "I_DARec"
+    module_path: "DArec_opt.I_DArec.Train_DArec"
+    class_name: "I_DArec"
+    hyperparameters:
+      epochs: 50
+      batch_size: 64
+      lr: 1e-3
+      wd: 1e-4
+      n_factors: 200
+      RPE_hidden_size: 200
+    grid_search_params:
+      # Focus on adaptation strength parameters
+      lr: [5e-4, 1e-3, 2e-3]
+    pretrained_required: true
+    pretrained_paths:
+      S_pretrained_weights: "Pretrained_ParametersS_AutoRec_50.pkl"
+      T_pretrained_weights: "Pretrained_ParametersT_AutoRec_50.pkl"
+
+  - name: "U_DARec"
+    module_path: "DArec_opt.U_DArec.Train_DArec"
+    class_name: "U_DArec"
+    hyperparameters:
+      epochs: 20
+      batch_size: 64
+      lr: 1e-3
+      wd: 1e-5
+      n_factors: 200
+      RPE_hidden_size: 200
+    grid_search_params:
+      lr: [5e-4, 1e-3, 2e-3]
+    pretrained_required: true
+    pretrained_paths:
+      S_pretrained_weights: "Pretrained_ParametersS_AutoRec_20.pkl"
+      T_pretrained_weights: "Pretrained_ParametersT_AutoRec_20.pkl"
+
+evaluation:
+  metrics: ["rmse", "mae", "mape", "statistical"]
+  save_predictions: true
+  save_embeddings: true  # Save embeddings for analysis
+  plot_training_curves: true
+  additional_analysis: ["domain_similarity"]
+
+output_dir: "domain_adaptation_results"
+random_seed: 42
+device: "cuda"
+parallel: true
+max_workers: 3

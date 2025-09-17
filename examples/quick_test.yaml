@@ -1,0 +1,49 @@
+# Quick test configuration for I-DARec
+name: "i_darec_quick_test"
+description: "Quick test of I-DARec with limited scope"
+
+data:
+  data_dir: "/home2/dadams/DARec-opt/data"
+  train_ratio: 0.9
+  test_ratio: 0.1
+  preprocessed: true
+  batch_size: 32
+  max_domain_pairs: 3  # Only test 3 domain pairs
+  source_domains: 
+    - "Amazon_Instant_Video"
+    - "Apps_for_Android"
+  target_domains:
+    - "Amazon_Instant_Video"
+    - "Apps_for_Android"
+    - "Automotive"
+
+methods:
+  - name: "I_DARec"
+    module_path: "DArec_opt.I_DArec.Train_DArec"
+    class_name: "I_DArec"
+    hyperparameters:
+      epochs: 10
+      batch_size: 32
+      lr: 1e-3
+      wd: 1e-4
+      n_factors: 200
+      RPE_hidden_size: 200
+    grid_search_params:
+      lr: [1e-3, 1e-2]  # Only 2 values for quick test
+      n_factors: [100, 200]
+    pretrained_required: true
+    pretrained_paths:
+      S_pretrained_weights: "Pretrained_ParametersS_AutoRec_50.pkl"
+      T_pretrained_weights: "Pretrained_ParametersT_AutoRec_50.pkl"
+
+evaluation:
+  metrics: ["rmse", "mae"]
+  save_predictions: false
+  save_embeddings: false
+  plot_training_curves: true
+
+output_dir: "quick_test_results"
+random_seed: 42
+device: "cuda"
+parallel: false
+max_workers: 2

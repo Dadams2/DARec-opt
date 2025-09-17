@@ -1,0 +1,97 @@
+# Comprehensive grid search configuration
+name: "comprehensive_grid_search"
+description: "Complete grid search across I-DARec, U-DARec and AutoRec baselines"
+
+data:
+  data_dir: "/home2/dadams/DARec-opt/data"
+  train_ratio: 0.9
+  test_ratio: 0.1
+  preprocessed: true
+  batch_size: 64
+  # max_domain_pairs: null  # Test all available pairs
+  # source_domains and target_domains will be auto-discovered
+
+methods:
+  - name: "I_DARec"
+    module_path: "DArec_opt.I_DArec.Train_DArec"
+    class_name: "I_DArec"
+    hyperparameters:
+      epochs: 70
+      batch_size: 64
+      lr: 1e-3
+      wd: 1e-4
+      n_factors: 200
+      RPE_hidden_size: 200
+    grid_search_params:
+      lr: [1e-4, 1e-3, 1e-2]
+      wd: [1e-5, 1e-4, 1e-3]
+      n_factors: [100, 200, 400]
+      RPE_hidden_size: [100, 200, 400]
+    pretrained_required: true
+    pretrained_paths:
+      S_pretrained_weights: "Pretrained_ParametersS_AutoRec_50.pkl"
+      T_pretrained_weights: "Pretrained_ParametersT_AutoRec_50.pkl"
+
+  - name: "U_DARec"
+    module_path: "DArec_opt.U_DArec.Train_DArec"
+    class_name: "U_DArec"
+    hyperparameters:
+      epochs: 20
+      batch_size: 64
+      lr: 1e-3
+      wd: 1e-5
+      n_factors: 200
+      RPE_hidden_size: 200
+    grid_search_params:
+      lr: [1e-4, 1e-3, 1e-2]
+      wd: [1e-6, 1e-5, 1e-4]
+      n_factors: [100, 200, 400]
+      RPE_hidden_size: [100, 200, 400]
+    pretrained_required: true
+    pretrained_paths:
+      S_pretrained_weights: "Pretrained_ParametersS_AutoRec_20.pkl"
+      T_pretrained_weights: "Pretrained_ParametersT_AutoRec_20.pkl"
+
+  - name: "I_AutoRec"
+    module_path: "DArec_opt.I_DArec.Train_AutoRec"
+    class_name: "I_AutoRec"
+    hyperparameters:
+      epochs: 50
+      batch_size: 64
+      lr: 1e-3
+      wd: 1e-4
+      n_factors: 200
+      train_S: false  # Train target by default
+    grid_search_params:
+      lr: [1e-4, 1e-3, 1e-2]
+      wd: [1e-5, 1e-4, 1e-3]
+      n_factors: [100, 200, 400]
+
+  - name: "U_AutoRec"
+    module_path: "DArec_opt.U_DArec.Train_AutoRec"
+    class_name: "U_AutoRec"
+    hyperparameters:
+      epochs: 20
+      batch_size: 64
+      lr: 1e-3
+      wd: 1e-4
+      n_factors: 200
+      train_S: false
+    grid_search_params:
+      lr: [1e-4, 1e-3, 1e-2]
+      wd: [1e-5, 1e-4, 1e-3]
+      n_factors: [100, 200, 400]
+
+evaluation:
+  metrics: ["rmse", "mae", "statistical"]
+  save_predictions: true
+  save_embeddings: false
+  plot_training_curves: true
+  additional_analysis: ["ranking", "coverage"]
+
+output_dir: "comprehensive_results"
+random_seed: 42
+device: "cuda"
+parallel: true
+max_workers: 4
+resume: false
