@@ -3,40 +3,27 @@ from AutoRec import *
 from Data_Preprocessing import Mydata
 from function import MRMSELoss
 from torch.utils.data import DataLoader, Dataset
+import argparse
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import math
-import os
-import datetime
-import json
-import itertools
-from pathlib import Path
+def check_positive(val):
+    val = int(val)
+    if val <=0:
+        raise argparse.ArgumentError(f'{val} is invalid value. epochs should be positive integer')
+    return val
 
-class ExperimentConfig:
-    def __init__(self, 
-                 epochs=50,
-                 batch_size=64,
-                 lr=1e-3,
-                 wd=1e-4,
-                 n_factors=200,
-                 output_dir="./experiment_results",
-                 log_dir="./logs",
-                 save_models=True):
-        self.epochs = epochs
-        self.batch_size = batch_size
-        self.lr = lr
-        self.wd = wd
-        self.n_factors = n_factors
-        self.output_dir = output_dir
-        self.log_dir = log_dir
-        self.save_models = save_models
-        
-    def to_dict(self):
-        return self.__dict__
+parser = argparse.ArgumentParser(description='AutoRec with PyTorch')
+parser.add_argument('--epochs', '-e', type=check_positive, default=50)
+parser.add_argument('--batch_size', '-b', type=check_positive , default=64)
+parser.add_argument('--lr', '-l', type=float, help='learning rate', default=1e-3)
+parser.add_argument('--wd', '-w', type=float, help='weight decay(lambda)', default=1e-4)
+parser.add_argument('--n_factors', type=int, help="embedding size of autoencoder", default=200)
+parser.add_argument('--train_S', type=bool, help="Whether to train the source autoencoder", default=False)
+args = parser.parse_args()
 
-
-train_dataset = Mydata("/home2/dadams/DARec-opt/data/ratings_Amazon_Instant_Video.csv", "/home2/dadams/DARec-opt/data/ratings_Electronics.csv", train=True, preprocessed=True)
-test_dataset = Mydata("/home2/dadams/DARec-opt/data/ratings_Amazon_Instant_Video.csv", "/home2/dadams/DARec-opt/data/ratings_Electronics.csv", train=False, preprocessed=True)
+train_dataset = Mydata("/home2/dadams/DARec-opt/data/ratings_Amazon_Instant_Video.csv", "/home2/dadams/DARec-opt/data/ratings_Apps_for_Android.csv", train=True, preprocessed=True)
+test_dataset = Mydata("/home2/dadams/DARec-opt/data/ratings_Amazon_Instant_Video.csv", "/home2/dadams/DARec-opt/data/ratings_Apps_for_Android.csv", train=False, preprocessed=True)
 
 train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 test_loader = DataLoader(test_dataset,  batch_size=args.batch_size, shuffle=False)
