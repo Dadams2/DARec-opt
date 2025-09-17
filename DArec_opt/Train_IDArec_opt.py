@@ -32,7 +32,7 @@ def parse_args(args_dict=None):
     parser = argparse.ArgumentParser(description='DArec with PyTorch')
     parser.add_argument('--epochs', '-e', type=int, default=70)
     parser.add_argument('--batch_size', '-b', type=int, default=64)
-    parser.add_argument('--lr', '-l', type=float, help='learning rate', default=1e-3)
+    # parser.add_argument('--lr', '-l', type=float, help='learning rate', default=1e-3)
     parser.add_argument('--wd', '-w', type=float, help='weight decay(lambda)', default=1e-4)
     parser.add_argument("--n_factors", type=int, default=200, help="embedding dim")
     parser.add_argument("--n_users", type=int, default=1637, help="size of each image batch")
