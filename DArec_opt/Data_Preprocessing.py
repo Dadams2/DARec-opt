@@ -5,7 +5,7 @@ from tqdm import tqdm
 import numpy as np
 import os
 import torch
-from AutoRec import *
+from DArec_opt.IAutoRec import *
 
 class Mydata(Dataset):
     def __init__(self, S_path, T_path, train_ratio=0.9, test_ratio=0.1, train=None, preprocessed=True, mode='I'):
