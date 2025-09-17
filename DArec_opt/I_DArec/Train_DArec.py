@@ -1,7 +1,7 @@
 import numpy as np
 import torch.optim as optim
 import torch.utils.data
-from DArec_opt.I_DArec.I_DArec import *
+from I_DArec import *
 from torch.utils.data import DataLoader
 from Data_Preprocessing import Mydata
 import matplotlib.pyplot as plt

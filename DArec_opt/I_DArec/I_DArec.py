@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from function import *
 import argparse
-from DArec_opt.IAutoRec import I_AutoRec
+from AutoRec import I_AutoRec
 class I_DArec(nn.Module):
     def __init__(self, args):
         """

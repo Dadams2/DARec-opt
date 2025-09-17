@@ -3,93 +3,398 @@ from AutoRec import *
 from Data_Preprocessing import Mydata
 from function import MRMSELoss
 from torch.utils.data import DataLoader, Dataset
-import argparse
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import math
-def check_positive(val):
-    val = int(val)
-    if val <=0:
-        raise argparse.ArgumentError(f'{val} is invalid value. epochs should be positive integer')
-    return val
+import os
+import datetime
+import itertools
+import json
+import traceback
 
-parser = argparse.ArgumentParser(description='AutoRec with PyTorch')
-parser.add_argument('--epochs', '-e', type=check_positive, default=50)
-parser.add_argument('--batch_size', '-b', type=check_positive , default=64)
-parser.add_argument('--lr', '-l', type=float, help='learning rate', default=1e-3)
-parser.add_argument('--wd', '-w', type=float, help='weight decay(lambda)', default=1e-4)
-parser.add_argument('--n_factors', type=int, help="embedding size of autoencoder", default=200)
-parser.add_argument('--train_S', type=bool, help="Whether to train the source autoencoder", default=False)
-args = parser.parse_args()
+def train_autoencoders(source_domain_path, target_domain_path, config, output_dir="./results", log_dir="./logs"):
+    """
+    Train both source and target autoencoders simultaneously.
+    
+    Args:
+        source_domain_path: Path to source domain data CSV
+        target_domain_path: Path to target domain data CSV  
+        config: Dictionary with training parameters (epochs, batch_size, lr, wd, n_factors)
+        output_dir: Directory to save model checkpoints
+        log_dir: Directory to save training logs
+    """
+    # Create output directories if they don't exist
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Create timestamped log file
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    source_name = os.path.basename(source_domain_path).replace('.csv', '').replace('ratings_', '')
+    target_name = os.path.basename(target_domain_path).replace('.csv', '').replace('ratings_', '')
+    log_filename = f"training_log_{source_name}_to_{target_name}_{timestamp}.json"
+    log_path = os.path.join(log_dir, log_filename)
+    
+    # Load datasets
+    train_dataset = Mydata(source_domain_path, target_domain_path, train=True, preprocessed=True)
+    test_dataset = Mydata(source_domain_path, target_domain_path, train=False, preprocessed=True)
 
-train_dataset = Mydata("/home2/dadams/DARec-opt/data/ratings_Amazon_Instant_Video.csv", "/home2/dadams/DARec-opt/data/ratings_Apps_for_Android.csv", train=True, preprocessed=True)
-test_dataset = Mydata("/home2/dadams/DARec-opt/data/ratings_Amazon_Instant_Video.csv", "/home2/dadams/DARec-opt/data/ratings_Apps_for_Android.csv", train=False, preprocessed=True)
+    train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], shuffle=False)
 
-train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-test_loader = DataLoader(test_dataset,  batch_size=args.batch_size, shuffle=False)
+    print(f"Data loaded for {source_name} -> {target_name}")
+    
+    # Get dimensions for both source and target
+    S_n_items, S_n_users = train_dataset.S_data.shape[0], train_dataset.S_data.shape[1]
+    T_n_items, T_n_users = train_dataset.T_data.shape[0], train_dataset.T_data.shape[1]
 
-print("Data is loaded")
-if args.train_S == True:
-    n_items, n_users = train_dataset.S_data.shape[0], train_dataset.S_data.shape[1]
-else:
-    n_items, n_users = train_dataset.T_data.shape[0], train_dataset.T_data.shape[1]
+    # Create models for both source and target
+    S_model = I_AutoRec(n_users=S_n_users, n_items=S_n_items, n_factors=config['n_factors']).cuda()
+    T_model = I_AutoRec(n_users=T_n_users, n_items=T_n_items, n_factors=config['n_factors']).cuda()
+    
+    criterion = MRMSELoss().cuda()
 
-model = I_AutoRec(n_users=n_users, n_items=n_items, n_factors=args.n_factors).cuda()
-criterion = MRMSELoss().cuda()
+    # Create optimizers for both models
+    S_optimizer = optim.Adam(S_model.parameters(), weight_decay=config['wd'], lr=config['lr'])
+    T_optimizer = optim.Adam(T_model.parameters(), weight_decay=config['wd'], lr=config['lr'])
 
-optimizer = optim.Adam(model.parameters(), weight_decay=args.wd, lr=args.lr)
+    def train_epoch(epoch):
+        S_model.train()
+        T_model.train()
+        S_Total_RMSE = 0
+        S_Total_MASK = 0
+        T_Total_RMSE = 0
+        T_Total_MASK = 0
+        
+        for idx, (S_data, T_data, S_y, T_y) in enumerate(train_loader):
+            S_data = S_data.cuda()
+            T_data = T_data.cuda()
+            
+            # Train source model
+            S_optimizer.zero_grad()
+            _, S_pred = S_model(S_data)
+            S_pred.cuda()
+            S_loss, S_mask = criterion(S_pred, S_data)
+            S_Total_RMSE += S_loss.item()
+            S_Total_MASK += torch.sum(S_mask).item()
+            S_loss.backward()
+            S_optimizer.step()
+            
+            # Train target model
+            T_optimizer.zero_grad()
+            _, T_pred = T_model(T_data)
+            T_pred.cuda()
+            T_loss, T_mask = criterion(T_pred, T_data)
+            T_Total_RMSE += T_loss.item()
+            T_Total_MASK += torch.sum(T_mask).item()
+            T_loss.backward()
+            T_optimizer.step()
 
-def train(epoch):
-    model.train()
-    Total_RMSE = 0
-    Total_MASK = 0
-    loc = 0 if args.train_S == True else 1
-    for idx, d in enumerate(train_loader):
-        data = d[loc].cuda()
-        optimizer.zero_grad()
-        _, pred = model(data)
-        pred.cuda()
-        loss, mask = criterion(pred, data)
-        Total_RMSE += loss.item()
-        Total_MASK += torch.sum(mask).item()
-        # RMSE = torch.sqrt(loss.item() / torch.sum(mask))
-        loss.backward()
-        optimizer.step()
+        S_rmse = math.sqrt(S_Total_RMSE / S_Total_MASK)
+        T_rmse = math.sqrt(T_Total_RMSE / T_Total_MASK)
+        return S_rmse, T_rmse
 
-    return math.sqrt(Total_RMSE / Total_MASK)
+    def test_epoch():
+        S_model.eval()
+        T_model.eval()
+        S_Total_RMSE = 0
+        S_Total_MASK = 0
+        T_Total_RMSE = 0
+        T_Total_MASK = 0
+        
+        with torch.no_grad():
+            for idx, (S_data, T_data, S_y, T_y) in enumerate(test_loader):
+                S_data = S_data.cuda()
+                T_data = T_data.cuda()
+                
+                # Test source model
+                _, S_pred = S_model(S_data)
+                S_pred.cuda()
+                S_loss, S_mask = criterion(S_pred, S_data)
+                S_Total_RMSE += S_loss.item()
+                S_Total_MASK += torch.sum(S_mask).item()
+                
+                # Test target model
+                _, T_pred = T_model(T_data)
+                T_pred.cuda()
+                T_loss, T_mask = criterion(T_pred, T_data)
+                T_Total_RMSE += T_loss.item()
+                T_Total_MASK += torch.sum(T_mask).item()
+
+        S_rmse = math.sqrt(S_Total_RMSE / S_Total_MASK)
+        T_rmse = math.sqrt(T_Total_RMSE / T_Total_MASK)
+        return S_rmse, T_rmse
+
+    # Training loop
+    training_log = {
+        'config': config,
+        'source_domain': source_name,
+        'target_domain': target_name,
+        'epochs': []
+    }
+    
+    S_train_rmse = []
+    S_test_rmse = []
+    T_train_rmse = []
+    T_test_rmse = []
+    
+    for epoch in tqdm(range(config['epochs']), desc=f"Training {source_name}->{target_name}"):
+        S_tr_rmse, T_tr_rmse = train_epoch(epoch)
+        S_te_rmse, T_te_rmse = test_epoch()
+        
+        S_train_rmse.append(S_tr_rmse)
+        S_test_rmse.append(S_te_rmse)
+        T_train_rmse.append(T_tr_rmse)
+        T_test_rmse.append(T_te_rmse)
+        
+        # Log epoch results
+        epoch_log = {
+            'epoch': epoch + 1,
+            'source_train_rmse': S_tr_rmse,
+            'source_test_rmse': S_te_rmse,
+            'target_train_rmse': T_tr_rmse,
+            'target_test_rmse': T_te_rmse
+        }
+        training_log['epochs'].append(epoch_log)
+        
+        # Save models at final epoch
+        if epoch == config['epochs'] - 1:
+            S_model_path = os.path.join(output_dir, f"S_AutoRec_{source_name}_{target_name}_{epoch+1}_{timestamp}.pkl")
+            T_model_path = os.path.join(output_dir, f"T_AutoRec_{source_name}_{target_name}_{epoch+1}_{timestamp}.pkl")
+            torch.save(S_model.state_dict(), S_model_path)
+            torch.save(T_model.state_dict(), T_model_path)
+    
+    # Save training log
+    with open(log_path, 'w') as f:
+        json.dump(training_log, f, indent=2)
+    
+    print(f"Source best test RMSE: {min(S_test_rmse):.4f}")
+    print(f"Target best test RMSE: {min(T_test_rmse):.4f}")
+    print(f"Training log saved to: {log_path}")
+    
+    return {
+        'source_best_rmse': min(S_test_rmse),
+        'target_best_rmse': min(T_test_rmse),
+        'log_path': log_path,
+        'source_model_path': S_model_path,
+        'target_model_path': T_model_path
+    }
 
 
+def grid_search_hyperparameters(source_domain_path, target_domain_path, param_grid, output_dir="./results", log_dir="./logs"):
+    """
+    Perform grid search over hyperparameters.
+    
+    Args:
+        source_domain_path: Path to source domain data CSV
+        target_domain_path: Path to target domain data CSV
+        param_grid: Dictionary with parameter names as keys and lists of values to try
+        output_dir: Directory to save model checkpoints
+        log_dir: Directory to save training logs
+    
+    Example param_grid:
+    {
+        'epochs': [50, 100],
+        'batch_size': [32, 64],
+        'lr': [1e-3, 1e-4],
+        'wd': [1e-4, 1e-5],
+        'n_factors': [200, 400]
+    }
+    """
+    # Generate all combinations of parameters
+    param_names = list(param_grid.keys())
+    param_values = list(param_grid.values())
+    param_combinations = list(itertools.product(*param_values))
+    
+    results = []
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    source_name = os.path.basename(source_domain_path).replace('.csv', '').replace('ratings_', '')
+    target_name = os.path.basename(target_domain_path).replace('.csv', '').replace('ratings_', '')
+    
+    print(f"Starting grid search with {len(param_combinations)} combinations for {source_name} -> {target_name}")
+    
+    for i, param_combo in enumerate(param_combinations):
+        config = dict(zip(param_names, param_combo))
+        print(f"\nGrid search {i+1}/{len(param_combinations)}: {config}")
+        
+        try:
+            result = train_autoencoders(
+                source_domain_path, 
+                target_domain_path, 
+                config, 
+                output_dir, 
+                log_dir
+            )
+            result['config'] = config
+            result['combination_id'] = i + 1
+            results.append(result)
+            
+        except Exception as e:
+            error_traceback = traceback.format_exc()
+            print(f"Error with configuration {config}: {e}")
+            print(f"Full traceback:\n{error_traceback}")
+            results.append({
+                'config': config,
+                'combination_id': i + 1,
+                'error': str(e),
+                'error_traceback': error_traceback,
+                'source_best_rmse': float('inf'),
+                'target_best_rmse': float('inf')
+            })
+    
+    # Save grid search results
+    grid_search_log = {
+        'source_domain': source_name,
+        'target_domain': target_name,
+        'param_grid': param_grid,
+        'results': results,
+        'timestamp': timestamp
+    }
+    
+    grid_search_path = os.path.join(log_dir, f"grid_search_{source_name}_to_{target_name}_{timestamp}.json")
+    with open(grid_search_path, 'w') as f:
+        json.dump(grid_search_log, f, indent=2)
+    
+    # Find best configurations
+    valid_results = [r for r in results if 'error' not in r]
+    if valid_results:
+        best_source = min(valid_results, key=lambda x: x['source_best_rmse'])
+        best_target = min(valid_results, key=lambda x: x['target_best_rmse'])
+        
+        print(f"\nGrid search completed!")
+        print(f"Best source RMSE: {best_source['source_best_rmse']:.4f} with config: {best_source['config']}")
+        print(f"Best target RMSE: {best_target['target_best_rmse']:.4f} with config: {best_target['config']}")
+        print(f"Grid search results saved to: {grid_search_path}")
+        
+        return {
+            'best_source_config': best_source,
+            'best_target_config': best_target,
+            'all_results': results,
+            'grid_search_path': grid_search_path
+        }
+    else:
+        print("All configurations failed!")
+        return {'all_results': results, 'grid_search_path': grid_search_path}
 
-def test():
-    model.eval()
-    Total_RMSE = 0
-    Total_MASK = 0
-    loc = 0 if args.train_S == True else 1
-    with torch.no_grad():
-        for idx, d in enumerate(test_loader):
-            data = d[loc].cuda()
-            _, pred = model(data)
-            pred.cuda()
-            loss, mask = criterion(pred, data)
-            Total_RMSE += loss.item()
-            Total_MASK += torch.sum(mask).item()
 
-    return math.sqrt(Total_RMSE / Total_MASK)
+def run_multi_domain_experiments(domain_pairs, config=None, param_grid=None, output_dir="./results", log_dir="./logs"):
+    """
+    Run experiments across multiple domain pairs.
+    
+    Args:
+        domain_pairs: List of tuples (source_path, target_path) for domain combinations
+        config: Single configuration dict for simple training (mutually exclusive with param_grid)
+        param_grid: Parameter grid for grid search (mutually exclusive with config)
+        output_dir: Directory to save model checkpoints
+        log_dir: Directory to save training logs
+    """
+    if config is not None and param_grid is not None:
+        raise ValueError("Provide either config or param_grid, not both")
+    if config is None and param_grid is None:
+        raise ValueError("Must provide either config or param_grid")
+    
+    all_results = []
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    for i, (source_path, target_path) in enumerate(domain_pairs):
+        print(f"\n{'='*60}")
+        print(f"Domain pair {i+1}/{len(domain_pairs)}")
+        print(f"Source: {source_path}")
+        print(f"Target: {target_path}")
+        print(f"{'='*60}")
+        
+        try:
+            if config is not None:
+                # Single configuration training
+                result = train_autoencoders(source_path, target_path, config, output_dir, log_dir)
+                result['domain_pair'] = (source_path, target_path)
+                all_results.append(result)
+            else:
+                # Grid search
+                result = grid_search_hyperparameters(source_path, target_path, param_grid, output_dir, log_dir)
+                result['domain_pair'] = (source_path, target_path)
+                all_results.append(result)
+                
+        except Exception as e:
+            error_traceback = traceback.format_exc()
+            print(f"Error processing domain pair {source_path} -> {target_path}: {e}")
+            print(f"Full traceback:\n{error_traceback}")
+            all_results.append({
+                'domain_pair': (source_path, target_path),
+                'error': str(e),
+                'error_traceback': error_traceback
+            })
+    
+    # Save overall experiment results
+    experiment_summary = {
+        'timestamp': timestamp,
+        'domain_pairs': domain_pairs,
+        'experiment_type': 'single_config' if config is not None else 'grid_search',
+        'config': config,
+        'param_grid': param_grid,
+        'results': all_results
+    }
+    
+    summary_path = os.path.join(log_dir, f"multi_domain_experiment_{timestamp}.json")
+    with open(summary_path, 'w') as f:
+        json.dump(experiment_summary, f, indent=2)
+    
+    print(f"\n{'='*60}")
+    print(f"Multi-domain experiment completed!")
+    print(f"Processed {len(domain_pairs)} domain pairs")
+    print(f"Results saved to: {summary_path}")
+    print(f"{'='*60}")
+    
+    return {
+        'experiment_summary': experiment_summary,
+        'summary_path': summary_path
+    }
 
-if __name__=="__main__":
-    train_rmse = []
-    test_rmse = []
-    # wdir = r"D:\DARec_I\Pretrained_Parameters"
-    wdir = r"Pretrained_Parameters"
-    model_name = r'S_AutoRec' if args.train_S == True else r'T_AutoRec'
-    for epoch in tqdm(range(args.epochs)):
-        train_rmse.append(train(epoch))
-        test_rmse.append(test())
-        if epoch % args.epochs == args.epochs - 1:
-            torch.save(model.state_dict(), wdir + model_name + "_%d.pkl" % (epoch+1))
-    print(min(test_rmse))
-    plt.plot(range(args.epochs), train_rmse, range(args.epochs), test_rmse)
-    plt.xlabel('epoch')
-    plt.ylabel('RMSE')
-    plt.xticks(range(0, args.epochs, 2))
-    plt.show()
+
+# Example usage functions
+def create_default_config():
+    """Create a default configuration dictionary."""
+    return {
+        'epochs': 50,
+        'batch_size': 64,
+        'lr': 1e-3,
+        'wd': 1e-4,
+        'n_factors': 200
+    }
+
+def create_default_param_grid():
+    """Create a default parameter grid for grid search."""
+    return {
+        'epochs': [50],
+        'batch_size': [32, 64],
+        'lr': [1e-3, 1e-4],
+        'wd': [1e-4, 1e-5],
+        'n_factors': [200, 400]
+    }
+
+if __name__ == "__main__":
+    
+    # Define domain pairs 
+    base_data_dir = "../../data" 
+    domain_pairs = [
+        (f"{base_data_dir}/ratings_Amazon_Instant_Video.csv", f"{base_data_dir}/ratings_Apps_for_Android.csv"),
+        (f"{base_data_dir}/ratings_Amazon_Instant_Video.csv", f"{base_data_dir}/ratings_Beauty.csv"),
+        # Add more domain pairs as needed
+    ]
+    
+    # Option 1: Single configuration training
+    config = create_default_config()
+    results = run_multi_domain_experiments(
+        domain_pairs=domain_pairs,
+        config=config,
+        output_dir="./models",
+        log_dir="./logs"
+    )
+    
+    # Option 2: Grid search (comment out the above and uncomment below)
+    # param_grid = create_default_param_grid()
+    # results = run_multi_domain_experiments(
+    #     domain_pairs=domain_pairs,
+    #     param_grid=param_grid,
+    #     output_dir="./models",
+    #     log_dir="./logs"
+    # )
