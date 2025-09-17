@@ -1,4 +1,3 @@
-n
 import numpy as np
 import torch.optim as optim
 import torch.utils.data
