@@ -78,6 +78,10 @@ def train_autoencoders(source_domain_path, target_domain_path, config, output_di
     S_n_items, S_n_users = train_dataset.S_data.shape[0], train_dataset.S_data.shape[1]
     T_n_items, T_n_users = train_dataset.T_data.shape[0], train_dataset.T_data.shape[1]
 
+    # print number of items and users
+    print(f"Source domain ({source_name}): {S_n_items} items, {S_n_users} users")
+    print(f"Target domain ({target_name}): {T_n_items} items, {T_n_users} users")
+
     # Create models for both source and target
     S_model = I_AutoRec(n_users=S_n_users, n_items=S_n_items, n_factors=config['n_factors']).cuda()
     T_model = I_AutoRec(n_users=T_n_users, n_items=T_n_items, n_factors=config['n_factors']).cuda()
