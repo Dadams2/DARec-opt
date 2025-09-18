@@ -404,12 +404,13 @@ def create_default_param_grid():
 
 if __name__ == "__main__":
     
-    # Define domain pairs 
-    base_data_dir = "../../data" 
+    # Simple example usage - for full experiments, use run_cross_domain_experiments.py
+    base_data_dir = "../../data"
+    
+    # Example: Train on a few domain pairs
     domain_pairs = [
         (f"{base_data_dir}/ratings_Amazon_Instant_Video.csv", f"{base_data_dir}/ratings_Apps_for_Android.csv"),
         (f"{base_data_dir}/ratings_Amazon_Instant_Video.csv", f"{base_data_dir}/ratings_Beauty.csv"),
-        # Add more domain pairs as needed
     ]
     
     # Option 1: Single configuration training
