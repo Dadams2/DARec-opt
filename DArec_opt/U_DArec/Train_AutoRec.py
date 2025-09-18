@@ -378,10 +378,9 @@ if __name__ == "__main__":
     # Simple example usage - for full experiments, use run_cross_domain_udarec_experiments.py
     base_data_dir = "../../data"
     
-    # Example: Train on a few domain pairs
     domain_pairs = [
-        (f"{base_data_dir}/ratings_Amazon_Instant_Video.csv", f"{base_data_dir}/ratings_Apps_for_Android.csv"),
-        (f"{base_data_dir}/ratings_Amazon_Instant_Video.csv", f"{base_data_dir}/ratings_Beauty.csv"),
+        (f"{base_data_dir}/ratings_Apps_for_Android.csv", f"{base_data_dir}/ratings_Video_Games.csv"),
+        (f"{base_data_dir}/ratings_Toys_and_Games.csv", f"{base_data_dir}/ratings_Automotive.csv"),
     ]
     
     # Option 1: Single configuration training
