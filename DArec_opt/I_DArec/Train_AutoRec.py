@@ -100,15 +100,33 @@ def train_autoencoders(source_domain_path, target_domain_path, config, output_di
         T_Total_RMSE = 0
         T_Total_MASK = 0
         
+        # Get GW configuration
+        enable_gw = config.get('enable_gw', False)
+        gw_weight = config.get('gw_weight', 0.1)
+        
         for idx, (S_data, T_data, S_y, T_y) in enumerate(train_loader):
             S_data = S_data.cuda()
             T_data = T_data.cuda()
             
             # Train source model
             S_optimizer.zero_grad()
-            _, S_pred = S_model(S_data)
+            if enable_gw:
+                _, S_pred, S_gw_loss = S_model(S_data, other_domain_x=T_data, enable_gw=True)
+            else:
+                result = S_model(S_data)
+                if len(result) == 3:  # Handle both old and new return formats
+                    _, S_pred, S_gw_loss = result
+                else:
+                    _, S_pred = result
+                    S_gw_loss = None
+            
             S_pred.cuda()
             S_loss, S_mask = criterion(S_pred, S_data)
+            
+            # Add GW loss if enabled and available
+            if enable_gw and S_gw_loss is not None:
+                S_loss = S_loss + gw_weight * S_gw_loss
+            
             S_Total_RMSE += S_loss.item()
             S_Total_MASK += torch.sum(S_mask).item()
             S_loss.backward()
@@ -116,9 +134,23 @@ def train_autoencoders(source_domain_path, target_domain_path, config, output_di
             
             # Train target model
             T_optimizer.zero_grad()
-            _, T_pred = T_model(T_data)
+            if enable_gw:
+                _, T_pred, T_gw_loss = T_model(T_data, other_domain_x=S_data, enable_gw=True)
+            else:
+                result = T_model(T_data)
+                if len(result) == 3:  # Handle both old and new return formats
+                    _, T_pred, T_gw_loss = result
+                else:
+                    _, T_pred = result
+                    T_gw_loss = None
+            
             T_pred.cuda()
             T_loss, T_mask = criterion(T_pred, T_data)
+            
+            # Add GW loss if enabled and available
+            if enable_gw and T_gw_loss is not None:
+                T_loss = T_loss + gw_weight * T_gw_loss
+            
             T_Total_RMSE += T_loss.item()
             T_Total_MASK += torch.sum(T_mask).item()
             T_loss.backward()
@@ -142,14 +174,24 @@ def train_autoencoders(source_domain_path, target_domain_path, config, output_di
                 T_data = T_data.cuda()
                 
                 # Test source model
-                _, S_pred = S_model(S_data)
+                result = S_model(S_data)
+                if len(result) == 3:  # Handle both old and new return formats
+                    _, S_pred, _ = result
+                else:
+                    _, S_pred = result
+                
                 S_pred.cuda()
                 S_loss, S_mask = criterion(S_pred, S_data)
                 S_Total_RMSE += S_loss.item()
                 S_Total_MASK += torch.sum(S_mask).item()
                 
                 # Test target model
-                _, T_pred = T_model(T_data)
+                result_t = T_model(T_data)
+                if len(result_t) == 3:  # Handle both old and new return formats
+                    _, T_pred, _ = result_t
+                else:
+                    _, T_pred = result_t
+                
                 T_pred.cuda()
                 T_loss, T_mask = criterion(T_pred, T_data)
                 T_Total_RMSE += T_loss.item()
@@ -393,7 +435,22 @@ def create_default_config():
         'batch_size': 64,
         'lr': 1e-3,
         'wd': 1e-4,
-        'n_factors': 200
+        'n_factors': 200,
+        'enable_gw': False,  # Enable Gromov-Wasserstein loss
+        'gw_weight': 0.1     # Weight for GW loss when enabled
+    }
+
+
+def create_gw_config():
+    """Create a default configuration dictionary."""
+    return {
+        'epochs': 50,
+        'batch_size': 64,
+        'lr': 1e-3,
+        'wd': 1e-4,
+        'n_factors': 200,
+        'enable_gw': True,  # Enable Gromov-Wasserstein loss
+        'gw_weight': 0.1     # Weight for GW loss when enabled
     }
 
 def create_default_param_grid():
@@ -403,7 +460,9 @@ def create_default_param_grid():
         'batch_size': [32, 64],
         'lr': [1e-3, 1e-4],
         'wd': [1e-4, 1e-5],
-        'n_factors': [200, 400]
+        'n_factors': [200, 400],
+        'enable_gw': [False, True],  # Test both with and without GW loss
+        'gw_weight': [0.05, 0.1, 0.2]  # Different GW loss weights
     }
 
 if __name__ == "__main__":
@@ -417,13 +476,22 @@ if __name__ == "__main__":
         (f"{base_data_dir}/ratings_Toys_and_Games.csv", f"{base_data_dir}/ratings_Automotive.csv"),
     ]
     
-    # Option 1: Single configuration training
-    config = create_default_config()
+    # Single configuration training
+    # config = create_default_config()
+    # results = run_multi_domain_experiments(
+    #     domain_pairs=domain_pairs,
+    #     config=config,
+    #     output_dir="./models",
+    #     log_dir="./logs"
+    # )
+
+    # GW loss 
+    config = create_gw_config()
     results = run_multi_domain_experiments(
         domain_pairs=domain_pairs,
         config=config,
-        output_dir="./models",
-        log_dir="./logs"
+        output_dir="./ot_models",
+        log_dir="./ot_logs"
     )
     
     # Option 2: Grid search (comment out the above and uncomment below)

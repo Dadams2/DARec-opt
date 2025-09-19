@@ -178,6 +178,10 @@ def train_darec(source_domain_path, target_domain_path, config,
         target_total_rmse = 0
         target_total_mask = 0
         
+        # Get GW configuration
+        enable_gw = config.get('enable_gw', False)
+        gw_weight = config.get('gw_weight', 0.1)
+        
         for idx, (source_rating, target_rating, source_labels, target_labels) in enumerate(train_loader):
             source_rating = source_rating.cuda()
             target_rating = target_rating.cuda()
@@ -188,7 +192,18 @@ def train_darec(source_domain_path, target_domain_path, config,
             
             # Source domain forward pass
             is_source = True
-            class_output, source_prediction, target_prediction = net(source_rating, is_source)
+            if enable_gw:
+                class_output, source_prediction, target_prediction, gw_loss_s = net(
+                    source_rating, is_source, source_rating_matrix=source_rating, 
+                    target_rating_matrix=target_rating, enable_gw=True)
+            else:
+                result = net(source_rating, is_source)
+                if len(result) == 4:  # Handle both old and new return formats
+                    class_output, source_prediction, target_prediction, gw_loss_s = result
+                else:
+                    class_output, source_prediction, target_prediction = result
+                    gw_loss_s = None
+                    
             source_loss, source_mask, target_mask = criterion(class_output, source_prediction, target_prediction,
                                                     source_rating, target_rating, source_labels)
             source_rmse, _ = RMSE(source_prediction, source_rating)
@@ -198,13 +213,34 @@ def train_darec(source_domain_path, target_domain_path, config,
             
             # Target domain forward pass
             is_source = False
-            class_output, source_prediction, target_prediction = net(target_rating, is_source)
+            if enable_gw:
+                class_output, source_prediction, target_prediction, gw_loss_t = net(
+                    target_rating, is_source, source_rating_matrix=source_rating, 
+                    target_rating_matrix=target_rating, enable_gw=True)
+            else:
+                result = net(target_rating, is_source)
+                if len(result) == 4:  # Handle both old and new return formats
+                    class_output, source_prediction, target_prediction, gw_loss_t = result
+                else:
+                    class_output, source_prediction, target_prediction = result
+                    gw_loss_t = None
+                    
             target_loss, source_mask, target_mask = criterion(class_output, source_prediction, target_prediction,
                                                               source_rating, target_rating, target_labels)
             target_rmse, _ = RMSE(target_prediction, target_rating)
             target_total_rmse += target_rmse.item()
             target_total_mask += torch.sum(target_mask).item()
             loss += target_loss
+            
+            # Add GW loss if enabled and available
+            if enable_gw:
+                gw_losses = []
+                if gw_loss_s is not None:
+                    gw_losses.append(gw_loss_s)
+                if gw_loss_t is not None:
+                    gw_losses.append(gw_loss_t)
+                if gw_losses:
+                    loss = loss + gw_weight * sum(gw_losses) / len(gw_losses)
             
             total_loss += loss.item()
             loss.backward()
@@ -241,7 +277,12 @@ def train_darec(source_domain_path, target_domain_path, config,
                 
                 # Source domain evaluation
                 is_source = True
-                class_output, source_prediction, target_prediction = net(source_rating, is_source)
+                result = net(source_rating, is_source)
+                if len(result) == 4:  # Handle both old and new return formats
+                    class_output, source_prediction, target_prediction, _ = result
+                else:
+                    class_output, source_prediction, target_prediction = result
+                    
                 source_loss, source_mask, target_mask = criterion(class_output, source_prediction, target_prediction,
                                                         source_rating, target_rating, source_labels)
                 source_rmse, _ = RMSE(source_prediction, source_rating)
@@ -255,7 +296,11 @@ def train_darec(source_domain_path, target_domain_path, config,
                 
                 # Target domain evaluation
                 is_source = False
-                class_output_t, source_prediction_t, target_prediction_t = net(target_rating, is_source)
+                result_t = net(target_rating, is_source)
+                if len(result_t) == 4:  # Handle both old and new return formats
+                    class_output_t, source_prediction_t, target_prediction_t, _ = result_t
+                else:
+                    class_output_t, source_prediction_t, target_prediction_t = result_t
                 target_loss, source_mask_t, target_mask_t = criterion(class_output_t, source_prediction_t, target_prediction_t,
                                                               source_rating, target_rating, target_labels)
                 target_rmse, _ = RMSE(target_prediction_t, target_rating)
@@ -568,7 +613,9 @@ def create_default_darec_config():
         'lr': 1e-3,
         'wd': 1e-4,
         'n_factors': 200,
-        'RPE_hidden_size': 200
+        'RPE_hidden_size': 200,
+        'enable_gw': False,  # Enable Gromov-Wasserstein loss
+        'gw_weight': 0.1     # Weight for GW loss when enabled
     }
 
 
@@ -580,7 +627,9 @@ def create_default_darec_param_grid():
         'lr': [1e-3, 1e-4],
         'wd': [1e-4, 1e-5],
         'n_factors': [200, 400],
-        'RPE_hidden_size': [200, 300]
+        'RPE_hidden_size': [200, 300],
+        'enable_gw': [False, True],  # Test both with and without GW loss
+        'gw_weight': [0.05, 0.1, 0.2]  # Different GW loss weights
     }
 
 

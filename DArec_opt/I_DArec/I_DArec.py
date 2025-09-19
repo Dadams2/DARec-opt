@@ -3,6 +3,13 @@ import torch.nn as nn
 from function import *
 import argparse
 from AutoRec import I_AutoRec
+# Import GW distance from OT_torch_ (optional for GW loss)
+try:
+    from OT_torch_ import GW_distance_uniform
+    GW_AVAILABLE = True
+except ImportError:
+    GW_AVAILABLE = False
+    print("Warning: GW_distance_uniform not available. GW loss will be disabled.")
 class I_DArec(nn.Module):
     def __init__(self, args):
         """
@@ -62,11 +69,14 @@ class I_DArec(nn.Module):
             nn.Linear(self.RPE_hidden_size // 2, self.n_users)
         )
 
-    def forward(self, rating_matrix, is_source):
+    def forward(self, rating_matrix, is_source, source_rating_matrix=None, target_rating_matrix=None, enable_gw=False):
         """
         rating_matrix: input matrix
-        alpha: parameters in ReverseLayerF
+        is_source: bool
+        source_rating_matrix, target_rating_matrix: needed for GW loss (batch, n_users)
+        enable_gw: whether to compute GW loss (requires both source and target matrices)
         """
+        # Standard forward for prediction/classification
         if is_source == True:
             embedding, _ = self.S_autorec(rating_matrix)
         else:
@@ -75,4 +85,29 @@ class I_DArec(nn.Module):
         source_prediction = self.S_RP(feature)
         target_prediction = self.T_RP(feature)
         class_output = self.DC(feature)
-        return class_output, source_prediction, target_prediction
+
+        # Compute GW loss if enabled and both source and target rating matrices are provided
+        gw_loss = None
+        if (enable_gw and GW_AVAILABLE and 
+            source_rating_matrix is not None and target_rating_matrix is not None):
+            # Get embeddings for both domains
+            source_emb, _ = self.S_autorec(source_rating_matrix)
+            target_emb, _ = self.T_autorec(target_rating_matrix)
+            # GW expects shape (batch, d, n), so transpose if needed
+            # Here, batch = 1, d = n_factors, n = n_items (or n_users)
+            # source_emb: (batch, n_factors)
+            # Add batch dim if missing
+            if source_emb.dim() == 2:
+                source_emb = source_emb.unsqueeze(0)
+            if target_emb.dim() == 2:
+                target_emb = target_emb.unsqueeze(0)
+            # Transpose to (batch, d, n)
+            source_emb = source_emb.transpose(1, 2)
+            target_emb = target_emb.transpose(1, 2)
+            # Compute GW loss
+            gw_loss = GW_distance_uniform(source_emb, target_emb)
+            # If GW returns a tensor, take mean scalar
+            if hasattr(gw_loss, 'mean'):
+                gw_loss = gw_loss.mean()
+
+        return class_output, source_prediction, target_prediction, gw_loss
