@@ -100,9 +100,10 @@ def train_autoencoders(source_domain_path, target_domain_path, config, output_di
         T_Total_RMSE = 0
         T_Total_MASK = 0
         
-        # Get GW configuration
-        enable_gw = config.get('enable_gw', False)
+        # Get OT configuration
+        enable_ot = config.get('enable_ot', False)
         gw_weight = config.get('gw_weight', 0.1)
+        w_weight = config.get('w_weight', 0.1)
         
         for idx, (S_data, T_data, S_y, T_y) in enumerate(train_loader):
             S_data = S_data.cuda()
@@ -110,22 +111,23 @@ def train_autoencoders(source_domain_path, target_domain_path, config, output_di
             
             # Train source model
             S_optimizer.zero_grad()
-            if enable_gw:
-                _, S_pred, S_gw_loss = S_model(S_data, other_domain_x=T_data, enable_gw=True)
+            if enable_ot:
+                _, S_pred, S_ot_loss = S_model(S_data, other_domain_x=T_data, enable_ot=True, 
+                                              gw_weight=gw_weight, w_weight=w_weight)
             else:
                 result = S_model(S_data)
                 if len(result) == 3:  # Handle both old and new return formats
-                    _, S_pred, S_gw_loss = result
+                    _, S_pred, S_ot_loss = result
                 else:
                     _, S_pred = result
-                    S_gw_loss = None
+                    S_ot_loss = None
             
             S_pred.cuda()
             S_loss, S_mask = criterion(S_pred, S_data)
             
-            # Add GW loss if enabled and available
-            if enable_gw and S_gw_loss is not None:
-                S_loss = S_loss + gw_weight * S_gw_loss
+            # Add OT loss if enabled and available
+            if enable_ot and S_ot_loss is not None:
+                S_loss = S_loss + S_ot_loss
             
             S_Total_RMSE += S_loss.item()
             S_Total_MASK += torch.sum(S_mask).item()
@@ -134,22 +136,23 @@ def train_autoencoders(source_domain_path, target_domain_path, config, output_di
             
             # Train target model
             T_optimizer.zero_grad()
-            if enable_gw:
-                _, T_pred, T_gw_loss = T_model(T_data, other_domain_x=S_data, enable_gw=True)
+            if enable_ot:
+                _, T_pred, T_ot_loss = T_model(T_data, other_domain_x=S_data, enable_ot=True,
+                                              gw_weight=gw_weight, w_weight=w_weight)
             else:
                 result = T_model(T_data)
                 if len(result) == 3:  # Handle both old and new return formats
-                    _, T_pred, T_gw_loss = result
+                    _, T_pred, T_ot_loss = result
                 else:
                     _, T_pred = result
-                    T_gw_loss = None
+                    T_ot_loss = None
             
             T_pred.cuda()
             T_loss, T_mask = criterion(T_pred, T_data)
             
-            # Add GW loss if enabled and available
-            if enable_gw and T_gw_loss is not None:
-                T_loss = T_loss + gw_weight * T_gw_loss
+            # Add OT loss if enabled and available
+            if enable_ot and T_ot_loss is not None:
+                T_loss = T_loss + T_ot_loss
             
             T_Total_RMSE += T_loss.item()
             T_Total_MASK += torch.sum(T_mask).item()
@@ -436,21 +439,51 @@ def create_default_config():
         'lr': 1e-3,
         'wd': 1e-4,
         'n_factors': 200,
-        'enable_gw': False,  # Enable Gromov-Wasserstein loss
-        'gw_weight': 0.1     # Weight for GW loss when enabled
+        'enable_ot': False,     # Enable full optimal transport loss (GW + W distance)
+        'gw_weight': 0.1,       # Weight for GW distance component
+        'w_weight': 0.1         # Weight for Wasserstein distance component
     }
 
 
-def create_gw_config():
-    """Create a default configuration dictionary."""
+def create_ot_config():
+    """Create a configuration with full optimal transport loss enabled."""
     return {
         'epochs': 50,
         'batch_size': 64,
         'lr': 1e-3,
         'wd': 1e-4,
         'n_factors': 200,
-        'enable_gw': True,  # Enable Gromov-Wasserstein loss
-        'gw_weight': 0.1     # Weight for GW loss when enabled
+        'enable_ot': True,      # Enable full optimal transport loss (GW + W distance)
+        'gw_weight': 0.1,       # Weight for GW distance component
+        'w_weight': 0.1         # Weight for Wasserstein distance component
+    }
+
+
+def create_gw_config():
+    """Create a configuration with only GW loss enabled."""
+    return {
+        'epochs': 50,
+        'batch_size': 64,
+        'lr': 1e-3,
+        'wd': 1e-4,
+        'n_factors': 200,
+        'enable_ot': True,      # Enable optimal transport loss
+        'gw_weight': 0.1,       # Weight for GW distance component
+        'w_weight': 0.0         # No Wasserstein distance component
+    }
+
+
+def create_w_config():
+    """Create a configuration with only Wasserstein distance enabled."""
+    return {
+        'epochs': 50,
+        'batch_size': 64,
+        'lr': 1e-3,
+        'wd': 1e-4,
+        'n_factors': 200,
+        'enable_ot': True,      # Enable optimal transport loss
+        'gw_weight': 0.0,       # No GW distance component
+        'w_weight': 0.1         # Weight for Wasserstein distance component
     }
 
 def create_default_param_grid():
@@ -461,8 +494,9 @@ def create_default_param_grid():
         'lr': [1e-3, 1e-4],
         'wd': [1e-4, 1e-5],
         'n_factors': [200, 400],
-        'enable_gw': [False, True],  # Test both with and without GW loss
-        'gw_weight': [0.05, 0.1, 0.2]  # Different GW loss weights
+        'enable_ot': [False, True],         # Test both with and without OT loss
+        'gw_weight': [0.05, 0.1, 0.2],     # Different GW loss weights
+        'w_weight': [0.05, 0.1, 0.2]       # Different W distance weights
     }
 
 if __name__ == "__main__":
@@ -476,16 +510,21 @@ if __name__ == "__main__":
         (f"{base_data_dir}/ratings_Toys_and_Games.csv", f"{base_data_dir}/ratings_Automotive.csv"),
     ]
     
-    # Single configuration training
+    # Single configuration training options:
+    
+    # Option 1: Default config (no OT loss)
     # config = create_default_config()
-    # results = run_multi_domain_experiments(
-    #     domain_pairs=domain_pairs,
-    #     config=config,
-    #     output_dir="./models",
-    #     log_dir="./logs"
-    # )
-
-    # GW loss 
+    
+    # Option 2: Full OT loss (GW + W distance)
+    # config = create_ot_config()
+    
+    # Option 3: Only GW loss
+    # config = create_gw_config()
+    
+    # Option 4: Only Wasserstein distance
+    # config = create_w_config()
+    
+    # Current: Use GW only configuration
     config = create_gw_config()
     results = run_multi_domain_experiments(
         domain_pairs=domain_pairs,
@@ -494,11 +533,13 @@ if __name__ == "__main__":
         log_dir="./ot_logs"
     )
     
-    # Option 2: Grid search (comment out the above and uncomment below)
+    # Option: Grid search (comment out the above and uncomment below)
     # param_grid = create_default_param_grid()
     # results = run_multi_domain_experiments(
     #     domain_pairs=domain_pairs,
     #     param_grid=param_grid,
     #     output_dir="./models",
+    #     log_dir="./logs"
+    # )
     #     log_dir="./logs"
     # )

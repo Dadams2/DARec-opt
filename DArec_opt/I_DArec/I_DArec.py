@@ -3,13 +3,13 @@ import torch.nn as nn
 from function import *
 import argparse
 from AutoRec import I_AutoRec
-# Import GW distance from OT_torch_ (optional for GW loss)
+# Import OT functions (optional for GW and W loss)
 try:
-    from OT_torch_ import GW_distance_uniform
-    GW_AVAILABLE = True
+    from OT_torch_ import GW_distance_uniform, cost_matrix_batch_torch, IPOT_distance_torch_batch_uniform
+    OT_AVAILABLE = True
 except ImportError:
-    GW_AVAILABLE = False
-    print("Warning: GW_distance_uniform not available. GW loss will be disabled.")
+    OT_AVAILABLE = False
+    print("Warning: Optimal transport functions not available. OT loss will be disabled.")
 class I_DArec(nn.Module):
     def __init__(self, args):
         """
@@ -69,45 +69,86 @@ class I_DArec(nn.Module):
             nn.Linear(self.RPE_hidden_size // 2, self.n_users)
         )
 
-    def forward(self, rating_matrix, is_source, source_rating_matrix=None, target_rating_matrix=None, enable_gw=False):
+    def forward(self, rating_matrix, is_source, source_rating_matrix=None, target_rating_matrix=None, 
+                enable_ot=False, gw_weight=0.1, w_weight=0.1):
         """
         rating_matrix: input matrix
         is_source: bool
-        source_rating_matrix, target_rating_matrix: needed for GW loss (batch, n_users)
-        enable_gw: whether to compute GW loss (requires both source and target matrices)
+        source_rating_matrix, target_rating_matrix: needed for OT loss (batch, n_users)
+        enable_ot: whether to compute full OT loss (GW + W distance) (requires both source and target matrices)
+        gw_weight: weight for GW distance component
+        w_weight: weight for Wasserstein distance component
         """
         # Standard forward for prediction/classification
         if is_source == True:
-            embedding, _, gw_loss = self.S_autorec(rating_matrix)
+            embedding, _, _ = self.S_autorec(rating_matrix)
         else:
-            embedding, _, gw_loss = self.T_autorec(rating_matrix)
+            embedding, _, _ = self.T_autorec(rating_matrix)
         feature = self.RPE(embedding)
         source_prediction = self.S_RP(feature)
         target_prediction = self.T_RP(feature)
         class_output = self.DC(feature)
 
-        # Compute GW loss if enabled and both source and target rating matrices are provided
-        gw_loss = None
-        if (enable_gw and GW_AVAILABLE and 
+        # Compute full OT loss if enabled and both source and target rating matrices are provided
+        ot_loss = None
+        if (enable_ot and OT_AVAILABLE and 
             source_rating_matrix is not None and target_rating_matrix is not None):
             # Get embeddings for both domains
             source_emb, _, _ = self.S_autorec(source_rating_matrix)
             target_emb, _, _ = self.T_autorec(target_rating_matrix)
-            # GW expects shape (batch, d, n), so transpose if needed
-            # Here, batch = 1, d = n_factors, n = n_items (or n_users)
-            # source_emb: (batch, n_factors)
-            # Add batch dim if missing
+            
+            # Prepare embeddings for OT computation
+            # Add batch dimension if missing
             if source_emb.dim() == 2:
-                source_emb = source_emb.unsqueeze(0)
+                source_emb_ot = source_emb.unsqueeze(0)
+            else:
+                source_emb_ot = source_emb
             if target_emb.dim() == 2:
-                target_emb = target_emb.unsqueeze(0)
-            # Transpose to (batch, d, n)
-            source_emb = source_emb.transpose(1, 2)
-            target_emb = target_emb.transpose(1, 2)
-            # Compute GW loss
-            gw_loss = GW_distance_uniform(source_emb, target_emb)
-            # If GW returns a tensor, take mean scalar
-            if hasattr(gw_loss, 'mean'):
-                gw_loss = gw_loss.mean()
+                target_emb_ot = target_emb.unsqueeze(0)
+            else:
+                target_emb_ot = target_emb
+            
+            # Compute GW distance
+            gw_loss = None
+            if gw_weight > 0:
+                # Transpose to (batch, d, n) for GW computation
+                source_emb_gw = source_emb_ot.transpose(1, 2)
+                target_emb_gw = target_emb_ot.transpose(1, 2)
+                gw_loss = GW_distance_uniform(source_emb_gw, target_emb_gw)
+                if hasattr(gw_loss, 'mean'):
+                    gw_loss = gw_loss.mean()
+            
+            # Compute Wasserstein distance
+            w_loss = None
+            if w_weight > 0:
+                # Compute cosine distance matrix between embeddings
+                cos_distance = cost_matrix_batch_torch(source_emb_ot.transpose(2, 1), target_emb_ot.transpose(2, 1))
+                cos_distance = cos_distance.transpose(1, 2)
+                
+                # Apply threshold similar to the original usage
+                beta = 0.1
+                min_score = cos_distance.min()
+                max_score = cos_distance.max()
+                threshold = min_score + beta * (max_score - min_score)
+                cos_dist = torch.nn.functional.relu(cos_distance - threshold)
+                
+                # Compute Wasserstein distance
+                bs = source_emb_ot.size(0)
+                n_items_source = source_emb_ot.size(1)
+                n_items_target = target_emb_ot.size(1)
+                w_loss = -IPOT_distance_torch_batch_uniform(cos_dist, bs, n_items_source, n_items_target, 30)
+                if hasattr(w_loss, 'mean'):
+                    w_loss = w_loss.mean()
+            
+            # Combine losses
+            ot_loss = 0
+            if gw_loss is not None:
+                ot_loss += gw_weight * gw_loss
+            if w_loss is not None:
+                ot_loss += w_weight * w_loss
+            
+            # Return None if both weights are 0
+            if gw_weight == 0 and w_weight == 0:
+                ot_loss = None
 
-        return class_output, source_prediction, target_prediction, gw_loss
+        return class_output, source_prediction, target_prediction, ot_loss

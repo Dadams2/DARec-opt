@@ -163,7 +163,7 @@ def train_darec(source_domain_path, target_domain_path, config,
     optimizer = optim.Adam(filter(lambda p: p.requires_grad, net.parameters()), 
                           weight_decay=args.wd, lr=args.lr)
     RMSE = MRMSELoss().cuda()
-    criterion = DArec_Loss().cuda()
+    criterion = DArec_Loss(enable_domain_loss=config.get('enable_domain_loss', True)).cuda()
     
     # Initialize evaluation framework
     evaluator = EvaluationFramework()
@@ -178,9 +178,10 @@ def train_darec(source_domain_path, target_domain_path, config,
         target_total_rmse = 0
         target_total_mask = 0
         
-        # Get GW configuration
-        enable_gw = config.get('enable_gw', False)
+        # Get OT configuration
+        enable_ot = config.get('enable_ot', False)
         gw_weight = config.get('gw_weight', 0.1)
+        w_weight = config.get('w_weight', 0.1)
         
         for idx, (source_rating, target_rating, source_labels, target_labels) in enumerate(train_loader):
             source_rating = source_rating.cuda()
@@ -192,17 +193,18 @@ def train_darec(source_domain_path, target_domain_path, config,
             
             # Source domain forward pass
             is_source = True
-            if enable_gw:
-                class_output, source_prediction, target_prediction, gw_loss_s = net(
+            if enable_ot:
+                class_output, source_prediction, target_prediction, ot_loss_s = net(
                     source_rating, is_source, source_rating_matrix=source_rating, 
-                    target_rating_matrix=target_rating, enable_gw=True)
+                    target_rating_matrix=target_rating, enable_ot=True, 
+                    gw_weight=gw_weight, w_weight=w_weight)
             else:
                 result = net(source_rating, is_source)
                 if len(result) == 4:  # Handle both old and new return formats
-                    class_output, source_prediction, target_prediction, gw_loss_s = result
+                    class_output, source_prediction, target_prediction, ot_loss_s = result
                 else:
                     class_output, source_prediction, target_prediction = result
-                    gw_loss_s = None
+                    ot_loss_s = None
                     
             source_loss, source_mask, target_mask = criterion(class_output, source_prediction, target_prediction,
                                                     source_rating, target_rating, source_labels)
@@ -213,17 +215,18 @@ def train_darec(source_domain_path, target_domain_path, config,
             
             # Target domain forward pass
             is_source = False
-            if enable_gw:
-                class_output, source_prediction, target_prediction, gw_loss_t = net(
+            if enable_ot:
+                class_output, source_prediction, target_prediction, ot_loss_t = net(
                     target_rating, is_source, source_rating_matrix=source_rating, 
-                    target_rating_matrix=target_rating, enable_gw=True)
+                    target_rating_matrix=target_rating, enable_ot=True,
+                    gw_weight=gw_weight, w_weight=w_weight)
             else:
                 result = net(target_rating, is_source)
                 if len(result) == 4:  # Handle both old and new return formats
-                    class_output, source_prediction, target_prediction, gw_loss_t = result
+                    class_output, source_prediction, target_prediction, ot_loss_t = result
                 else:
                     class_output, source_prediction, target_prediction = result
-                    gw_loss_t = None
+                    ot_loss_t = None
                     
             target_loss, source_mask, target_mask = criterion(class_output, source_prediction, target_prediction,
                                                               source_rating, target_rating, target_labels)
@@ -232,15 +235,15 @@ def train_darec(source_domain_path, target_domain_path, config,
             target_total_mask += torch.sum(target_mask).item()
             loss += target_loss
             
-            # Add GW loss if enabled and available
-            if enable_gw:
-                gw_losses = []
-                if gw_loss_s is not None:
-                    gw_losses.append(gw_loss_s)
-                if gw_loss_t is not None:
-                    gw_losses.append(gw_loss_t)
-                if gw_losses:
-                    loss = loss + gw_weight * sum(gw_losses) / len(gw_losses)
+            # Add OT loss if enabled and available
+            if enable_ot:
+                ot_losses = []
+                if ot_loss_s is not None:
+                    ot_losses.append(ot_loss_s)
+                if ot_loss_t is not None:
+                    ot_losses.append(ot_loss_t)
+                if ot_losses:
+                    loss = loss + sum(ot_losses) / len(ot_losses)
             
             total_loss += loss.item()
             loss.backward()
@@ -614,8 +617,58 @@ def create_default_darec_config():
         'wd': 1e-4,
         'n_factors': 200,
         'RPE_hidden_size': 200,
-        'enable_gw': False,  # Enable Gromov-Wasserstein loss
-        'gw_weight': 0.1     # Weight for GW loss when enabled
+        'enable_ot': False,         # Enable full optimal transport loss (GW + W distance)
+        'gw_weight': 0.1,           # Weight for GW distance component
+        'w_weight': 0.1,            # Weight for Wasserstein distance component
+        'enable_domain_loss': True  # Enable domain prediction loss
+    }
+
+
+def create_ot_darec_config():
+    """Create a DARec configuration with full optimal transport loss enabled."""
+    return {
+        'epochs': 70,
+        'batch_size': 64,
+        'lr': 1e-3,
+        'wd': 1e-4,
+        'n_factors': 200,
+        'RPE_hidden_size': 200,
+        'enable_ot': True,          # Enable full optimal transport loss (GW + W distance)
+        'gw_weight': 0.1,           # Weight for GW distance component
+        'w_weight': 0.1,            # Weight for Wasserstein distance component
+        'enable_domain_loss': True  # Enable domain prediction loss
+    }
+
+
+def create_gw_darec_config():
+    """Create a DARec configuration with only GW loss enabled."""
+    return {
+        'epochs': 70,
+        'batch_size': 64,
+        'lr': 1e-3,
+        'wd': 1e-4,
+        'n_factors': 200,
+        'RPE_hidden_size': 200,
+        'enable_ot': True,          # Enable optimal transport loss
+        'gw_weight': 0.1,           # Weight for GW distance component
+        'w_weight': 0.0,            # No Wasserstein distance component
+        'enable_domain_loss': True  # Enable domain prediction loss
+    }
+
+
+def create_w_darec_config():
+    """Create a DARec configuration with only Wasserstein distance enabled."""
+    return {
+        'epochs': 70,
+        'batch_size': 64,
+        'lr': 1e-3,
+        'wd': 1e-4,
+        'n_factors': 200,
+        'RPE_hidden_size': 200,
+        'enable_ot': True,          # Enable optimal transport loss
+        'gw_weight': 0.0,           # No GW distance component
+        'w_weight': 0.1,            # Weight for Wasserstein distance component
+        'enable_domain_loss': True  # Enable domain prediction loss
     }
 
 
@@ -628,8 +681,9 @@ def create_default_darec_config():
 #         'wd': [1e-4, 1e-5],
 #         'n_factors': [200, 400],
 #         'RPE_hidden_size': [200, 300],
-#         'enable_gw': [False, True],  # Test both with and without GW loss
-#         'gw_weight': [0.05, 0.1, 0.2]  # Different GW loss weights
+#         'enable_ot': [False, True],         # Test both with and without OT loss
+#         'gw_weight': [0.05, 0.1, 0.2],     # Different GW loss weights
+#         'w_weight': [0.05, 0.1, 0.2]       # Different W distance weights
 #     }
 
 def alpha_param_grid():
@@ -641,9 +695,11 @@ def alpha_param_grid():
         'wd': [1e-4],
         'n_factors': [200],
         'RPE_hidden_size': [200],
-        'enable_gw': [True],  # Enable Gromov-Wasserstein loss
-        # gw weight big grid
-        'gw_weight': [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]     # Weight for GW loss when enabled
+        'enable_ot': [True],        # Enable optimal transport loss
+        # OT weight big grid
+        'gw_weight': [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],     # Weight for GW loss
+        'w_weight': [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5],                               # Weight for W distance
+        'enable_domain_loss': [True]  # Enable domain prediction loss
     }
 
 
@@ -672,8 +728,8 @@ if __name__ == "__main__":
     results = run_multi_domain_darec_experiments(
         domain_pairs=domain_pairs,
         param_grid=param_grid,
-        output_dir="./darec_grid_models",
-        log_dir="./darec_grid_logs",
+        output_dir="./darec_grid_gwd_models",
+        log_dir="./darec_grid_gwd_logs",
         models_dir="./models"  # Directory where AutoRec models are saved
     )
     
