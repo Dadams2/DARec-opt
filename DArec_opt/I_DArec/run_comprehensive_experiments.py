@@ -51,7 +51,7 @@ sys.path.append(parent_dir)
 
 # Import training functions
 from Train_AutoRec import train_autoencoders, create_default_config as create_autorec_config
-from Train_DArec import train_darec, create_default_darec_config
+from Train_DArec import train_darec, create_default_darec_config, grid_search_darec_hyperparameters
 
 def setup_logging(log_dir="./logs"):
     """Setup logging for the experiment runner."""
@@ -216,7 +216,7 @@ def run_autorec_training(domain_pairs, config, models_dir, log_dir, enable_ot=Fa
     
     # Create config with OT settings
     autorec_config = config.copy()
-    autorec_config['enable_gw'] = enable_ot
+    autorec_config['enable_gw'] = enable_ot  # AutoRec still uses enable_gw
     if enable_ot and 'gw_weight' not in autorec_config:
         autorec_config['gw_weight'] = 0.1
     
@@ -266,9 +266,14 @@ def run_darec_training(domain_pairs, config, models_dir, log_dir, enable_ot=Fals
     
     # Create config with OT settings
     darec_config = config.copy()
-    darec_config['enable_gw'] = enable_ot
-    if enable_ot and 'gw_weight' not in darec_config:
-        darec_config['gw_weight'] = 0.1
+    darec_config['enable_ot'] = enable_ot
+    if enable_ot:
+        if 'gw_weight' not in darec_config:
+            darec_config['gw_weight'] = 0.1
+        if 'w_weight' not in darec_config:
+            darec_config['w_weight'] = 0.1
+    if 'enable_domain_loss' not in darec_config:
+        darec_config['enable_domain_loss'] = True
     
     results = []
     for i, (source_path, target_path) in enumerate(domain_pairs):
@@ -544,6 +549,100 @@ def generate_comparison_tables(all_logs, output_dir):
         'summary_df': summary_df
     }
 
+def run_ot_weight_grid_search(domain_pairs, base_config, models_base_dir, logs_base_dir, 
+                             compact_grid=True):
+    """
+    Run grid search over OT weight combinations for DARec.
+    
+    Args:
+        domain_pairs: List of (source_path, target_path) tuples
+        base_config: Base configuration for training
+        models_base_dir: Base directory for saving models
+        logs_base_dir: Base directory for saving logs
+        compact_grid: Use compact grid (True) or full grid (False)
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("="*60)
+    logger.info("Running OT Weight Grid Search Experiments")
+    logger.info("="*60)
+    
+    # Create parameter grid
+    if compact_grid:
+        param_grid = create_compact_ot_weight_grid(
+            epochs=base_config.get('epochs', 70),
+            batch_size=base_config.get('batch_size', 64),
+            lr=base_config.get('lr', 1e-3),
+            wd=base_config.get('wd', 1e-4),
+            n_factors=base_config.get('n_factors', 200),
+            rpe_hidden_size=base_config.get('RPE_hidden_size', 200),
+            enable_domain_loss=base_config.get('enable_domain_loss', True)
+        )
+        grid_type = "compact"
+    else:
+        param_grid = create_ot_weight_grid(
+            epochs=base_config.get('epochs', 70),
+            batch_size=base_config.get('batch_size', 64),
+            lr=base_config.get('lr', 1e-3),
+            wd=base_config.get('wd', 1e-4),
+            n_factors=base_config.get('n_factors', 200),
+            rpe_hidden_size=base_config.get('RPE_hidden_size', 200),
+            enable_domain_loss=base_config.get('enable_domain_loss', True)
+        )
+        grid_type = "full"
+    
+    logger.info(f"Using {grid_type} OT weight grid:")
+    logger.info(f"  GW weights: {param_grid['gw_weight']}")
+    logger.info(f"  W weights: {param_grid['w_weight']}")
+    logger.info(f"  Total combinations: {len(param_grid['gw_weight']) * len(param_grid['w_weight'])}")
+    
+    # Create output directories
+    grid_models_dir = os.path.join(models_base_dir, f"ot_weight_grid_search_{grid_type}")
+    grid_logs_dir = os.path.join(logs_base_dir, f"ot_weight_grid_search_{grid_type}")
+    os.makedirs(grid_models_dir, exist_ok=True)
+    os.makedirs(grid_logs_dir, exist_ok=True)
+    
+    # Run grid search for each domain pair
+    all_results = []
+    
+    for i, (source_path, target_path) in enumerate(domain_pairs):
+        source_name = os.path.basename(source_path).replace('.csv', '').replace('ratings_', '')
+        target_name = os.path.basename(target_path).replace('.csv', '').replace('ratings_', '')
+        
+        logger.info(f"Running OT weight grid search {i+1}/{len(domain_pairs)}: {source_name} -> {target_name}")
+        
+        try:
+            # Use regular AutoRec models for this experiment
+            regular_autorec_models_dir = os.path.join(models_base_dir, "regular_autorec")
+            
+            result = grid_search_darec_hyperparameters(
+                source_path, target_path, param_grid,
+                output_dir=grid_models_dir,
+                log_dir=grid_logs_dir,
+                models_dir=regular_autorec_models_dir
+            )
+            
+            result['domain_pair'] = (source_path, target_path)
+            result['grid_type'] = grid_type
+            all_results.append(result)
+            
+        except Exception as e:
+            logger.error(f"Error in OT weight grid search for {source_name} -> {target_name}: {e}")
+            all_results.append({
+                'domain_pair': (source_path, target_path),
+                'grid_type': grid_type,
+                'error': str(e),
+                'error_traceback': traceback.format_exc()
+            })
+    
+    logger.info(f"OT weight grid search completed for {len(domain_pairs)} domain pairs")
+    return {
+        'grid_search_results': all_results,
+        'param_grid': param_grid,
+        'grid_type': grid_type,
+        'models_dir': grid_models_dir,
+        'logs_dir': grid_logs_dir
+    }
+
 def run_comprehensive_experiments(domain_pairs, autorec_config, darec_config, 
                                 models_base_dir, logs_base_dir, 
                                 skip_autorec=False, skip_darec=False):
@@ -678,6 +777,88 @@ def run_comprehensive_experiments(domain_pairs, autorec_config, darec_config,
         'comparison_results': comparison_results
     }
 
+def create_ot_weight_grid(epochs=70, batch_size=64, lr=1e-3, wd=1e-4, n_factors=200, 
+                         rpe_hidden_size=200, enable_domain_loss=True):
+    """Create a parameter grid for OT weight grid search."""
+    return {
+        'epochs': [epochs],
+        'batch_size': [batch_size],
+        'lr': [lr],
+        'wd': [wd],
+        'n_factors': [n_factors],
+        'RPE_hidden_size': [rpe_hidden_size],
+        'enable_ot': [True],
+        # OT weight grid - comprehensive search
+        'gw_weight': [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        'w_weight': [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5],
+        'enable_domain_loss': [enable_domain_loss]
+    }
+
+def create_compact_ot_weight_grid(epochs=70, batch_size=64, lr=1e-3, wd=1e-4, n_factors=200, 
+                                 rpe_hidden_size=200, enable_domain_loss=True):
+    """Create a smaller parameter grid for OT weight grid search."""
+    return {
+        'epochs': [epochs],
+        'batch_size': [batch_size],
+        'lr': [lr],
+        'wd': [wd],
+        'n_factors': [n_factors],
+        'RPE_hidden_size': [rpe_hidden_size],
+        'enable_ot': [True],
+        # Compact OT weight grid
+        'gw_weight': [0.05, 0.1, 0.2, 0.5],
+        'w_weight': [0.05, 0.1, 0.2],
+        'enable_domain_loss': [enable_domain_loss]
+    }
+
+def create_ot_darec_config(epochs=70, batch_size=64, lr=1e-3, wd=1e-4, n_factors=200, 
+                          rpe_hidden_size=200, gw_weight=0.1, w_weight=0.1, enable_domain_loss=True):
+    """Create a DARec configuration with full optimal transport loss enabled."""
+    return {
+        'epochs': epochs,
+        'batch_size': batch_size,
+        'lr': lr,
+        'wd': wd,
+        'n_factors': n_factors,
+        'RPE_hidden_size': rpe_hidden_size,
+        'enable_ot': True,
+        'gw_weight': gw_weight,
+        'w_weight': w_weight,
+        'enable_domain_loss': enable_domain_loss
+    }
+
+def create_gw_only_darec_config(epochs=70, batch_size=64, lr=1e-3, wd=1e-4, n_factors=200, 
+                               rpe_hidden_size=200, gw_weight=0.1, enable_domain_loss=True):
+    """Create a DARec configuration with only GW loss enabled."""
+    return {
+        'epochs': epochs,
+        'batch_size': batch_size,
+        'lr': lr,
+        'wd': wd,
+        'n_factors': n_factors,
+        'RPE_hidden_size': rpe_hidden_size,
+        'enable_ot': True,
+        'gw_weight': gw_weight,
+        'w_weight': 0.0,  # No Wasserstein distance
+        'enable_domain_loss': enable_domain_loss
+    }
+
+def create_w_only_darec_config(epochs=70, batch_size=64, lr=1e-3, wd=1e-4, n_factors=200, 
+                              rpe_hidden_size=200, w_weight=0.1, enable_domain_loss=True):
+    """Create a DARec configuration with only Wasserstein distance enabled."""
+    return {
+        'epochs': epochs,
+        'batch_size': batch_size,
+        'lr': lr,
+        'wd': wd,
+        'n_factors': n_factors,
+        'RPE_hidden_size': rpe_hidden_size,
+        'enable_ot': True,
+        'gw_weight': 0.0,  # No GW distance
+        'w_weight': w_weight,
+        'enable_domain_loss': enable_domain_loss
+    }
+
 def create_configs_from_args(args):
     """Create configuration dictionaries from command line arguments."""
     # AutoRec config
@@ -693,12 +874,36 @@ def create_configs_from_args(args):
     if args.n_factors:
         autorec_config['n_factors'] = args.n_factors
     
-    # Add GW weight if not present (both AutoRec and DARec use the same parameter)
+    # Add GW weight if not present (AutoRec uses enable_gw)
     if 'gw_weight' not in autorec_config:
-        autorec_config['gw_weight'] = 0.1
+        autorec_config['gw_weight'] = args.gw_weight
     
-    # DARec config
-    darec_config = create_default_darec_config()
+    # DARec config - use predefined configurations or custom parameters
+    if args.ot_config == 'default':
+        darec_config = create_default_darec_config()
+    elif args.ot_config == 'gw-only':
+        darec_config = create_gw_only_darec_config(
+            gw_weight=args.gw_weight,
+            enable_domain_loss=not args.disable_domain_loss
+        )
+    elif args.ot_config == 'w-only':
+        darec_config = create_w_only_darec_config(
+            w_weight=args.w_weight,
+            enable_domain_loss=not args.disable_domain_loss
+        )
+    elif args.ot_config == 'full-ot':
+        darec_config = create_ot_darec_config(
+            gw_weight=args.gw_weight,
+            w_weight=args.w_weight,
+            enable_domain_loss=not args.disable_domain_loss
+        )
+    elif args.ot_config == 'no-ot':
+        darec_config = create_default_darec_config()
+        darec_config['enable_ot'] = False
+    else:
+        darec_config = create_default_darec_config()
+    
+    # Override with command line arguments
     if args.epochs:
         darec_config['epochs'] = args.epochs
     if args.batch_size:
@@ -709,10 +914,14 @@ def create_configs_from_args(args):
         darec_config['wd'] = args.weight_decay
     if args.n_factors:
         darec_config['n_factors'] = args.n_factors
+    if args.rpe_hidden_size:
+        darec_config['RPE_hidden_size'] = args.rpe_hidden_size
     
-    # Add GW weight if not present (needed for OT DARec)
-    if 'gw_weight' not in darec_config:
-        darec_config['gw_weight'] = 0.1
+    # Override OT weights if using default config or for fine-tuning
+    if args.ot_config == 'default' or args.ot_config == 'full-ot':
+        darec_config['gw_weight'] = args.gw_weight
+        darec_config['w_weight'] = args.w_weight
+        darec_config['enable_domain_loss'] = not args.disable_domain_loss
     
     return autorec_config, darec_config
 
@@ -727,8 +936,21 @@ Examples:
   # Multiple domains using subset:
   python run_comprehensive_experiments.py --subset "0,1,2"
   
-  # All domain pairs:
-  python run_comprehensive_experiments.py
+  # All domain pairs with custom OT weights:
+  python run_comprehensive_experiments.py --gw-weight 0.2 --w-weight 0.15
+  
+  # Use predefined OT configurations:
+  python run_comprehensive_experiments.py --ot-config full-ot --gw-weight 0.3 --w-weight 0.2
+  python run_comprehensive_experiments.py --ot-config gw-only --gw-weight 0.5
+  python run_comprehensive_experiments.py --ot-config w-only --w-weight 0.3
+  python run_comprehensive_experiments.py --ot-config no-ot
+  
+  # Run OT weight grid search:
+  python run_comprehensive_experiments.py --run-ot-grid-search --subset "0,1"
+  python run_comprehensive_experiments.py --run-ot-grid-search --full-ot-grid --subset "0,1"
+  
+  # Disable domain loss:
+  python run_comprehensive_experiments.py --disable-domain-loss
         ''',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -739,6 +961,23 @@ Examples:
     parser.add_argument('--learning-rate', type=float, help='Learning rate')
     parser.add_argument('--weight-decay', type=float, help='Weight decay')
     parser.add_argument('--n-factors', type=int, help='Number of latent factors')
+    
+    # OT weight parameters
+    parser.add_argument('--gw-weight', type=float, default=0.1,
+                       help='Weight for Gromov-Wasserstein distance component (default: 0.1)')
+    parser.add_argument('--w-weight', type=float, default=0.1,
+                       help='Weight for Wasserstein distance component (default: 0.1)')
+    parser.add_argument('--disable-domain-loss', action='store_true',
+                       help='Disable domain prediction loss (enabled by default)')
+    parser.add_argument('--rpe-hidden-size', type=int, help='RPE hidden layer size')
+    
+    # OT configuration options
+    parser.add_argument('--ot-config', type=str, choices=['default', 'gw-only', 'w-only', 'full-ot', 'no-ot'],
+                       default='default', help='Predefined OT configuration to use')
+    parser.add_argument('--run-ot-grid-search', action='store_true',
+                       help='Run grid search over OT weight combinations instead of single config')
+    parser.add_argument('--full-ot-grid', action='store_true',
+                       help='Use full OT weight grid instead of compact grid (for --run-ot-grid-search)')
     
     # Domain specification
     parser.add_argument('--source-domain', type=str,
@@ -879,41 +1118,79 @@ Examples:
     logger.info(f"AutoRec configuration: {autorec_config}")
     logger.info(f"DARec configuration: {darec_config}")
     
-    # Run comprehensive experiments
-    try:
-        results = run_comprehensive_experiments(
-            domain_pairs=domain_pairs,
-            autorec_config=autorec_config,
-            darec_config=darec_config,
-            models_base_dir=args.models_dir,
-            logs_base_dir=args.logs_dir,
-            skip_autorec=args.skip_autorec,
-            skip_darec=args.skip_darec
-        )
+    # Check if running OT grid search instead of comprehensive experiments
+    if args.run_ot_grid_search:
+        logger.info("Running OT weight grid search instead of comprehensive experiments")
         
-        logger.info("All comprehensive experiments completed successfully!")
-        logger.info(f"Comparison tables saved to: {results['comparison_results']['summary_path']}")
-        
-        # Print summary of improvements if available
-        if 'summary_df' in results['comparison_results']:
-            summary_df = results['comparison_results']['summary_df']
-            logger.info(f"Processed {len(summary_df)} domain pairs")
+        # First ensure we have AutoRec models (skip if requested)
+        if not args.skip_autorec:
+            logger.info("Training AutoRec models for grid search...")
+            # Train regular AutoRec models for grid search
+            regular_autorec_models_dir = os.path.join(args.models_dir, "regular_autorec")
+            regular_autorec_logs_dir = os.path.join(args.logs_dir, "regular_autorec")
+            os.makedirs(regular_autorec_models_dir, exist_ok=True)
+            os.makedirs(regular_autorec_logs_dir, exist_ok=True)
             
-            # Print average RMSE for each method if available
-            for exp_type in ['regular_darec_regular_autorec', 'regular_darec_ot_autorec',
-                            'ot_darec_regular_autorec', 'ot_darec_ot_autorec']:
-                target_rmse_col = f'{exp_type}_target_rmse'
-                if target_rmse_col in summary_df.columns:
-                    avg_rmse = summary_df[target_rmse_col].mean()
-                    logger.info(f"Average target RMSE for {exp_type}: {avg_rmse:.4f}")
+            run_autorec_training(
+                domain_pairs, autorec_config, 
+                regular_autorec_models_dir, regular_autorec_logs_dir, 
+                enable_ot=False
+            )
         
-    except KeyboardInterrupt:
-        logger.info("Experiments interrupted by user")
-        return 1
-    except Exception as e:
-        logger.error(f"Error during experiments: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return 1
+        # Run OT weight grid search
+        try:
+            grid_results = run_ot_weight_grid_search(
+                domain_pairs=domain_pairs,
+                base_config=darec_config,
+                models_base_dir=args.models_dir,
+                logs_base_dir=args.logs_dir,
+                compact_grid=not args.full_ot_grid  # Use full grid if --full-ot-grid is specified
+            )
+            
+            logger.info("OT weight grid search completed successfully!")
+            logger.info(f"Grid search results saved to: {grid_results['logs_dir']}")
+            
+        except Exception as e:
+            logger.error(f"Error during OT grid search: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return 1
+    
+    else:
+        # Run comprehensive experiments
+        try:
+            results = run_comprehensive_experiments(
+                domain_pairs=domain_pairs,
+                autorec_config=autorec_config,
+                darec_config=darec_config,
+                models_base_dir=args.models_dir,
+                logs_base_dir=args.logs_dir,
+                skip_autorec=args.skip_autorec,
+                skip_darec=args.skip_darec
+            )
+            
+            logger.info("All comprehensive experiments completed successfully!")
+            logger.info(f"Comparison tables saved to: {results['comparison_results']['summary_path']}")
+            
+            # Print summary of improvements if available
+            if 'summary_df' in results['comparison_results']:
+                summary_df = results['comparison_results']['summary_df']
+                logger.info(f"Processed {len(summary_df)} domain pairs")
+                
+                # Print average RMSE for each method if available
+                for exp_type in ['regular_darec_regular_autorec', 'regular_darec_ot_autorec',
+                                'ot_darec_regular_autorec', 'ot_darec_ot_autorec']:
+                    target_rmse_col = f'{exp_type}_target_rmse'
+                    if target_rmse_col in summary_df.columns:
+                        avg_rmse = summary_df[target_rmse_col].mean()
+                        logger.info(f"Average target RMSE for {exp_type}: {avg_rmse:.4f}")
+            
+        except KeyboardInterrupt:
+            logger.info("Experiments interrupted by user")
+            return 1
+        except Exception as e:
+            logger.error(f"Error during experiments: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return 1
     
     return 0
 
