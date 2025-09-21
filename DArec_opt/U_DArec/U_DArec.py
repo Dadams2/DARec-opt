@@ -5,6 +5,13 @@ import torch.nn as nn
 from function import *
 from AutoRec import U_AutoRec 
 import argparse
+# Import GW distance from OT_torch_
+try:
+    from OT_torch_ import GW_distance_uniform
+    GW_AVAILABLE = True
+except ImportError:
+    GW_AVAILABLE = False
+    print("Warning: GW_distance_uniform not available. GW loss will be disabled.")
 
 class U_DArec(nn.Module):
     def __init__(self, args):
@@ -64,12 +71,16 @@ class U_DArec(nn.Module):
             nn.Linear(self.RPE_hidden_size // 2, self.T_n_items)
         )
 
-    def forward(self, rating_matrix, alpha, is_source):
+    def forward(self, rating_matrix, alpha, is_source, source_rating_matrix=None, target_rating_matrix=None, enable_gw=False):
         """
         rating_matrix: input matrix
         alpha: parameters in ReverseLayerF
+        is_source: bool indicating if input is from source domain
+        source_rating_matrix: source domain data for GW loss computation
+        target_rating_matrix: target domain data for GW loss computation
+        enable_gw: whether to compute GW loss between domains
         """
-        rating_matrix.cuda()
+        rating_matrix = rating_matrix.cuda()
         if is_source == True:
             embedding, _ = self.S_autorec(rating_matrix)
         else:
@@ -79,7 +90,32 @@ class U_DArec(nn.Module):
         target_prediction = self.T_RP(feature)
         reversed_feature = ReverseLayerF.apply(feature, alpha)
         class_output = self.DC(reversed_feature)
-        return class_output, source_prediction, target_prediction
+        
+        # Compute GW loss if enabled and both domain data are provided
+        gw_loss = None
+        if enable_gw and GW_AVAILABLE and source_rating_matrix is not None and target_rating_matrix is not None:
+            # Get embeddings for both domains
+            source_emb, _ = self.S_autorec(source_rating_matrix.cuda())
+            target_emb, _ = self.T_autorec(target_rating_matrix.cuda())
+            
+            # Prepare embeddings for GW computation
+            # Add batch dimension if missing
+            if source_emb.dim() == 2:
+                source_emb = source_emb.unsqueeze(0)
+            if target_emb.dim() == 2:
+                target_emb = target_emb.unsqueeze(0)
+            
+            # Transpose to (batch, d, n) for GW computation
+            source_emb = source_emb.transpose(1, 2)
+            target_emb = target_emb.transpose(1, 2)
+            
+            # Compute GW loss
+            gw_loss = GW_distance_uniform(source_emb, target_emb)
+            # If GW returns a tensor, take mean scalar
+            if hasattr(gw_loss, 'mean'):
+                gw_loss = gw_loss.mean()
+        
+        return class_output, source_prediction, target_prediction, gw_loss
 
 if __name__ == "__main__":
     # 行是item，列是user
@@ -93,9 +129,18 @@ if __name__ == "__main__":
     x = torch.randn(1500, 5000)
     net = U_DArec(args)
     loss = DArec_Loss()
-    class_output, source_prediction, target_prediction = net(x, 10, True)
-    print(target_prediction.shape)
-    print(class_output.shape)
+    
+    # Test without GW loss (backward compatible)
+    class_output, source_prediction, target_prediction, gw_loss = net(x, 10, True)
+    print(f"Target prediction shape: {target_prediction.shape}")
+    print(f"Class output shape: {class_output.shape}")
+    print(f"GW loss (should be None): {gw_loss}")
+    
+    # Test with GW loss
+    x_target = torch.randn(1500, 4000)  # Different target domain size
+    class_output_gw, source_pred_gw, target_pred_gw, gw_loss_gw = net(
+        x, 10, True, source_rating_matrix=x, target_rating_matrix=x_target, enable_gw=True)
+    print(f"GW loss (should have value): {gw_loss_gw}")
     source_rating = source_prediction
     target_rating = target_prediction
     labels = torch.ones_like(class_output)[:, 1].long()

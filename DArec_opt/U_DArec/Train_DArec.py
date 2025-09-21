@@ -83,7 +83,7 @@ def find_latest_autorec_models(models_dir, source_domain_name, target_domain_nam
 
 def train_darec(source_domain_path, target_domain_path, config, 
                 output_dir="./results", log_dir="./logs", models_dir="./models",
-                s_pretrained_path=None, t_pretrained_path=None):
+                s_pretrained_path=None, t_pretrained_path=None, enable_gw=True):
     """
     Train DARec model with configurable parameters.
     
@@ -96,6 +96,7 @@ def train_darec(source_domain_path, target_domain_path, config,
         models_dir: Directory to search for AutoRec pretrained models
         s_pretrained_path: Manual override for source AutoRec model path
         t_pretrained_path: Manual override for target AutoRec model path
+        enable_gw: Whether to enable Gromov-Wasserstein loss for domain alignment
     """
     # Create output directories
     os.makedirs(output_dir, exist_ok=True)
@@ -176,6 +177,7 @@ def train_darec(source_domain_path, target_domain_path, config,
         Total_RMSE = 0
         Total_MASK = 0
         total_loss = 0
+        gw_weight = config.get('gw_weight', 0.1)  # Get GW loss weight from config
         
         for idx, d in enumerate(train_loader):
             # alpha parameter for domain adaptation (similar to DANN)
@@ -191,10 +193,22 @@ def train_darec(source_domain_path, target_domain_path, config,
             optimizer.zero_grad()
             
             # Forward pass on source data
-            class_output_s, source_prediction_s, target_prediction_s = net(source_rating, alpha, True)
+            if enable_gw:
+                class_output_s, source_prediction_s, target_prediction_s, gw_loss_s = net(
+                    source_rating, alpha, True, 
+                    source_rating_matrix=source_rating, target_rating_matrix=target_rating, enable_gw=True)
+            else:
+                class_output_s, source_prediction_s, target_prediction_s, gw_loss_s = net(
+                    source_rating, alpha, True)
             
             # Forward pass on target data  
-            class_output_t, source_prediction_t, target_prediction_t = net(target_rating, alpha, False)
+            if enable_gw:
+                class_output_t, source_prediction_t, target_prediction_t, gw_loss_t = net(
+                    target_rating, alpha, False,
+                    source_rating_matrix=source_rating, target_rating_matrix=target_rating, enable_gw=True)
+            else:
+                class_output_t, source_prediction_t, target_prediction_t, gw_loss_t = net(
+                    target_rating, alpha, False)
             
             # Combine predictions and labels
             all_class_output = torch.cat([class_output_s, class_output_t], dim=0)
@@ -209,6 +223,17 @@ def train_darec(source_domain_path, target_domain_path, config,
                 all_class_output, all_source_pred, all_target_pred,
                 all_source_rating, all_target_rating, all_labels
             )
+            
+            # Add GW losses if available and enabled
+            if enable_gw:
+                gw_losses = []
+                if gw_loss_s is not None:
+                    gw_losses.append(gw_loss_s)
+                if gw_loss_t is not None:
+                    gw_losses.append(gw_loss_t)
+                if gw_losses:
+                    gw_loss_combined = sum(gw_losses) / len(gw_losses)
+                    loss = loss + gw_weight * gw_loss_combined
             
             loss.backward()
             optimizer.step()
@@ -241,7 +266,9 @@ def train_darec(source_domain_path, target_domain_path, config,
                 alpha = 1.0  # Fixed alpha for testing
                 
                 # Test on target data (main evaluation)
-                class_output, source_prediction, target_prediction = net(target_rating, alpha, False)
+                # Note: We don't need GW loss during testing, so we can disable it
+                class_output, source_prediction, target_prediction, _ = net(
+                    target_rating, alpha, False, enable_gw=False)
                 
                 # Calculate RMSE
                 rmse_loss, rmse_mask = RMSE(target_prediction, target_rating)
@@ -353,9 +380,12 @@ def train_darec(source_domain_path, target_domain_path, config,
 
 
 def grid_search_darec_hyperparameters(source_domain_path, target_domain_path, param_grid, 
-                                     output_dir="./results", log_dir="./logs", models_dir="./models"):
+                                     output_dir="./results", log_dir="./logs", models_dir="./models", enable_gw=True):
     """
     Perform grid search over DARec hyperparameters.
+    
+    Args:
+        enable_gw: Whether to enable Gromov-Wasserstein loss for domain alignment
     """
     # Generate all parameter combinations
     param_names = list(param_grid.keys())
@@ -376,7 +406,7 @@ def grid_search_darec_hyperparameters(source_domain_path, target_domain_path, pa
         
         try:
             result = train_darec(source_domain_path, target_domain_path, config, 
-                               output_dir, log_dir, models_dir)
+                               output_dir, log_dir, models_dir, enable_gw=enable_gw)
             result['config'] = config
             result['config_id'] = i + 1
             results.append(result)
@@ -420,9 +450,12 @@ def grid_search_darec_hyperparameters(source_domain_path, target_domain_path, pa
 
 
 def run_multi_domain_darec_experiments(domain_pairs, config=None, param_grid=None, 
-                                       output_dir="./results", log_dir="./logs", models_dir="./models"):
+                                       output_dir="./results", log_dir="./logs", models_dir="./models", enable_gw=True):
     """
     Run DARec experiments across multiple domain pairs.
+    
+    Args:
+        enable_gw: Whether to enable Gromov-Wasserstein loss for domain alignment
     """
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     
@@ -441,12 +474,12 @@ def run_multi_domain_darec_experiments(domain_pairs, config=None, param_grid=Non
             if param_grid is not None:
                 # Grid search for this domain pair
                 results = grid_search_darec_hyperparameters(source_path, target_path, param_grid, 
-                                                           output_dir, log_dir, models_dir)
+                                                           output_dir, log_dir, models_dir, enable_gw)
             else:
                 # Single configuration for this domain pair
                 if config is None:
                     config = create_default_darec_config()
-                results = train_darec(source_path, target_path, config, output_dir, log_dir, models_dir)
+                results = train_darec(source_path, target_path, config, output_dir, log_dir, models_dir, enable_gw=enable_gw)
             
             all_results.append({
                 'source_domain': source_name,
@@ -503,7 +536,8 @@ def create_default_darec_config():
         'RPE_hidden_size': 200,
         'lamda': 0.001,
         'u': 1.0,
-        'beta': 0.001
+        'beta': 0.001,
+        'gw_weight': 0.1  # Weight for Gromov-Wasserstein loss
     }
 
 
@@ -515,7 +549,8 @@ def create_default_darec_param_grid():
         'wd': [1e-4, 1e-5],
         'n_factors': [200, 400],
         'RPE_hidden_size': [200, 400],
-        'beta': [0.001, 0.01]
+        'beta': [0.001, 0.01],
+        'gw_weight': [0.05, 0.1, 0.2]  # Different GW loss weights to try
     }
 
 

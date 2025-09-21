@@ -44,7 +44,7 @@ def convert_to_json_serializable(obj):
     else:
         return obj
 
-def train_autoencoders(source_domain_path, target_domain_path, config, output_dir="./results", log_dir="./logs"):
+def train_autoencoders(source_domain_path, target_domain_path, config, output_dir="./results", log_dir="./logs", enable_gw=False, gw_weight=0.1):
     """
     Train both source and target autoencoders simultaneously.
     
@@ -54,6 +54,8 @@ def train_autoencoders(source_domain_path, target_domain_path, config, output_di
         config: Dictionary with training parameters (epochs, batch_size, lr, wd, n_factors)
         output_dir: Directory to save model checkpoints
         log_dir: Directory to save training logs
+        enable_gw: Whether to enable Gromov-Wasserstein loss for domain alignment
+        gw_weight: Weight for GW loss term
     """
     # Create output directories if they don't exist
     os.makedirs(output_dir, exist_ok=True)
@@ -102,8 +104,17 @@ def train_autoencoders(source_domain_path, target_domain_path, config, output_di
             
             # Train source model
             S_optimizer.zero_grad()
-            _, S_pred = S_model(S_data)
+            if enable_gw:
+                # Get embeddings and GW loss
+                _, S_pred, S_gw_loss = S_model(S_data, other_domain_x=T_data, enable_gw=True)
+            else:
+                _, S_pred = S_model(S_data)
+                S_gw_loss = None
+            
             S_loss, S_mask = criterion(S_pred, S_data)
+            if enable_gw and S_gw_loss is not None:
+                S_loss = S_loss + gw_weight * S_gw_loss
+            
             S_Total_RMSE += S_loss.item()
             S_Total_MASK += torch.sum(S_mask).item()
             S_loss.backward()
@@ -111,8 +122,17 @@ def train_autoencoders(source_domain_path, target_domain_path, config, output_di
             
             # Train target model
             T_optimizer.zero_grad()
-            _, T_pred = T_model(T_data)
+            if enable_gw:
+                # Get embeddings and GW loss
+                _, T_pred, T_gw_loss = T_model(T_data, other_domain_x=S_data, enable_gw=True)
+            else:
+                _, T_pred = T_model(T_data)
+                T_gw_loss = None
+            
             T_loss, T_mask = criterion(T_pred, T_data)
+            if enable_gw and T_gw_loss is not None:
+                T_loss = T_loss + gw_weight * T_gw_loss
+            
             T_Total_RMSE += T_loss.item()
             T_Total_MASK += torch.sum(T_mask).item()
             T_loss.backward()
@@ -208,7 +228,7 @@ def train_autoencoders(source_domain_path, target_domain_path, config, output_di
         'log_path': log_path
     }
 
-def grid_search_hyperparameters(source_domain_path, target_domain_path, param_grid, output_dir="./results", log_dir="./logs"):
+def grid_search_hyperparameters(source_domain_path, target_domain_path, param_grid, output_dir="./results", log_dir="./logs", enable_gw=False, gw_weight=0.1):
     """
     Perform grid search over hyperparameters.
     
@@ -218,6 +238,8 @@ def grid_search_hyperparameters(source_domain_path, target_domain_path, param_gr
         param_grid: Dictionary with parameter names as keys and lists of values to try
         output_dir: Directory to save models
         log_dir: Directory to save logs
+        enable_gw: Whether to enable GW loss
+        gw_weight: Weight for GW loss
     """
     # Generate all parameter combinations
     param_names = list(param_grid.keys())
@@ -237,7 +259,7 @@ def grid_search_hyperparameters(source_domain_path, target_domain_path, param_gr
         print(f"\nConfiguration {i+1}/{len(param_combinations)}: {config}")
         
         try:
-            result = train_autoencoders(source_domain_path, target_domain_path, config, output_dir, log_dir)
+            result = train_autoencoders(source_domain_path, target_domain_path, config, output_dir, log_dir, enable_gw, gw_weight)
             result['config'] = config
             result['config_id'] = i + 1
             results.append(result)
@@ -278,7 +300,7 @@ def grid_search_hyperparameters(source_domain_path, target_domain_path, param_gr
     
     return results
 
-def run_multi_domain_experiments(domain_pairs, config=None, param_grid=None, output_dir="./results", log_dir="./logs"):
+def run_multi_domain_experiments(domain_pairs, config=None, param_grid=None, output_dir="./results", log_dir="./logs", enable_gw=False, gw_weight=0.1):
     """
     Run experiments across multiple domain pairs.
     
@@ -288,6 +310,8 @@ def run_multi_domain_experiments(domain_pairs, config=None, param_grid=None, out
         param_grid: Parameter grid dict (if doing grid search)
         output_dir: Directory to save models
         log_dir: Directory to save logs
+        enable_gw: Whether to enable GW loss
+        gw_weight: Weight for GW loss
     """
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     
@@ -305,12 +329,12 @@ def run_multi_domain_experiments(domain_pairs, config=None, param_grid=None, out
         try:
             if param_grid is not None:
                 # Grid search for this domain pair
-                results = grid_search_hyperparameters(source_path, target_path, param_grid, output_dir, log_dir)
+                results = grid_search_hyperparameters(source_path, target_path, param_grid, output_dir, log_dir, enable_gw, gw_weight)
             else:
                 # Single configuration for this domain pair
                 if config is None:
                     config = create_default_config()
-                results = train_autoencoders(source_path, target_path, config, output_dir, log_dir)
+                results = train_autoencoders(source_path, target_path, config, output_dir, log_dir, enable_gw, gw_weight)
             
             all_results.append({
                 'source_domain': source_name,
