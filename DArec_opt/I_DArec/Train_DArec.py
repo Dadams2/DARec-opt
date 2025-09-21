@@ -619,17 +619,31 @@ def create_default_darec_config():
     }
 
 
-def create_default_darec_param_grid():
+# def create_default_darec_param_grid():
+#     """Create a default parameter grid for DARec grid search."""
+#     return {
+#         'epochs': [50, 70],
+#         'batch_size': [32, 64],
+#         'lr': [1e-3, 1e-4],
+#         'wd': [1e-4, 1e-5],
+#         'n_factors': [200, 400],
+#         'RPE_hidden_size': [200, 300],
+#         'enable_gw': [False, True],  # Test both with and without GW loss
+#         'gw_weight': [0.05, 0.1, 0.2]  # Different GW loss weights
+#     }
+
+def alpha_param_grid():
     """Create a default parameter grid for DARec grid search."""
     return {
-        'epochs': [50, 70],
-        'batch_size': [32, 64],
-        'lr': [1e-3, 1e-4],
-        'wd': [1e-4, 1e-5],
-        'n_factors': [200, 400],
-        'RPE_hidden_size': [200, 300],
-        'enable_gw': [False, True],  # Test both with and without GW loss
-        'gw_weight': [0.05, 0.1, 0.2]  # Different GW loss weights
+        'epochs': [70],
+        'batch_size': [64],
+        'lr': [1e-3],
+        'wd': [1e-4],
+        'n_factors': [200],
+        'RPE_hidden_size': [200],
+        'enable_gw': [True],  # Enable Gromov-Wasserstein loss
+        # gw weight big grid
+        'gw_weight': [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]     # Weight for GW loss when enabled
     }
 
 
@@ -644,24 +658,24 @@ if __name__ == "__main__":
     ]
     
     # Option 1: Single configuration training
-    config = create_default_darec_config()
-    results = run_multi_domain_darec_experiments(
-        domain_pairs=domain_pairs,
-        config=config,
-        output_dir="./darec_models",
-        log_dir="./darec_logs",
-        models_dir="./models"  # Directory where AutoRec models are saved
-    )
-    
-    # Option 2: Grid search (comment out the above and uncomment below)
-    # param_grid = create_default_darec_param_grid()
+    # config = create_default_darec_config()
     # results = run_multi_domain_darec_experiments(
     #     domain_pairs=domain_pairs,
-    #     param_grid=param_grid,
+    #     config=config,
     #     output_dir="./darec_models",
     #     log_dir="./darec_logs",
     #     models_dir="./models"  # Directory where AutoRec models are saved
     # )
+    
+    # Option 2: Grid search (comment out the above and uncomment below)
+    param_grid = alpha_param_grid()
+    results = run_multi_domain_darec_experiments(
+        domain_pairs=domain_pairs,
+        param_grid=param_grid,
+        output_dir="./darec_grid_models",
+        log_dir="./darec_grid_logs",
+        models_dir="./models"  # Directory where AutoRec models are saved
+    )
     
     # Option 3: Single domain pair with manual AutoRec model paths
     # result = train_darec(
