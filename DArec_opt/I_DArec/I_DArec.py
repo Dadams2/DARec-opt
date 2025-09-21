@@ -78,9 +78,9 @@ class I_DArec(nn.Module):
         """
         # Standard forward for prediction/classification
         if is_source == True:
-            embedding, _ = self.S_autorec(rating_matrix)
+            embedding, _, gw_loss = self.S_autorec(rating_matrix)
         else:
-            embedding, _ = self.T_autorec(rating_matrix)
+            embedding, _, gw_loss = self.T_autorec(rating_matrix)
         feature = self.RPE(embedding)
         source_prediction = self.S_RP(feature)
         target_prediction = self.T_RP(feature)
@@ -91,8 +91,8 @@ class I_DArec(nn.Module):
         if (enable_gw and GW_AVAILABLE and 
             source_rating_matrix is not None and target_rating_matrix is not None):
             # Get embeddings for both domains
-            source_emb, _ = self.S_autorec(source_rating_matrix)
-            target_emb, _ = self.T_autorec(target_rating_matrix)
+            source_emb, _, _ = self.S_autorec(source_rating_matrix)
+            target_emb, _, _ = self.T_autorec(target_rating_matrix)
             # GW expects shape (batch, d, n), so transpose if needed
             # Here, batch = 1, d = n_factors, n = n_items (or n_users)
             # source_emb: (batch, n_factors)
