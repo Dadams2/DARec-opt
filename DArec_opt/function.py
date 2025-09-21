@@ -36,7 +36,7 @@ class MRMSELoss(nn.Module):
         return loss, mask
 
 class DArec_Loss(nn.Module):
-    def __init__(self, reduction='sum', lamda=0.001, u=1.0, beta=0.001):
+    def __init__(self, reduction='sum', lamda=0.001, u=1.0, beta=0.001, enable_domain_loss=True):
         super(DArec_Loss, self).__init__()
         self.reduction = reduction
         self.mse = nn.MSELoss(reduction=self.reduction)
@@ -45,6 +45,7 @@ class DArec_Loss(nn.Module):
         self.lamda = lamda
         self.u = u
         self.beta = beta
+        self.enable_domain_loss = enable_domain_loss
     def forward(self, class_output, source_prediction, target_prediction, source_rating, target_rating, labels):
         """
         :param class_output: Domain Classifier分类结果
@@ -58,7 +59,12 @@ class DArec_Loss(nn.Module):
         source_loss, source_mask = self.rmse(source_prediction, source_rating)
         target_loss, target_mask = self.rmse(target_prediction, target_rating)
         loss_pred = source_loss + self.beta * target_loss
-        loss_dom = self.u * self.cross_entropy(class_output, labels)
+        
+        if self.enable_domain_loss:
+            loss_dom = self.u * self.cross_entropy(class_output, labels)
+            total_loss = loss_pred + loss_dom
+        else:
+            total_loss = loss_pred
 
-        return loss_pred + loss_dom, source_mask, target_mask
+        return total_loss, source_mask, target_mask
 
